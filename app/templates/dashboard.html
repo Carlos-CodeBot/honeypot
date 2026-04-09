@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard SOC</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div class="container nav">
+      <div class="brand">Dashboard SOC</div>
+      <nav><a href="/">Sitio público</a></nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="grid">
+      <div class="card"><h3>Total eventos</h3><p>{{ stats['total'] }}</p></div>
+      <div class="card"><h3>Ataques detectados</h3><p>{{ stats['attacks'] or 0 }}</p></div>
+      <div class="card"><h3>IPs únicas</h3><p>{{ stats['unique_ips'] }}</p></div>
+      <div class="card"><h3>Alta severidad</h3><p>{{ stats['high_severity'] or 0 }}</p></div>
+    </div>
+
+    <section class="card">
+      <h3>Clasificación de ataques (Top)</h3>
+      <ul>
+        {% for item in top_types %}
+          <li><strong>{{ item.attack_type }}</strong>: {{ item.total }}</li>
+        {% else %}
+          <li>Sin eventos clasificados todavía.</li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    <section class="card">
+      <h3>Eventos recientes</h3>
+      <label><input type="checkbox" id="only-attacks"> Mostrar solo ataques</label>
+      <table id="logs">
+        <thead>
+          <tr>
+            <th>Fecha</th><th>IP</th><th>Ruta</th><th>Clasificación</th><th>Severidad</th><th>Confianza</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h3>Inteligencia por IP</h3>
+      <p>Este honeypot ya clasifica tráfico con reglas internas. Para producción puedes enviar estos logs a <strong>{{ siem_hint }}</strong>, Wazuh o Elastic SIEM para correlación avanzada.</p>
+      <table id="intel">
+        <thead><tr><th>IP</th><th>Eventos</th><th>Ataques</th><th>Confianza máx.</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </main>
+
+<script>
+async function loadLogs(){
+  const onlyAttacks = document.getElementById('only-attacks').checked ? '1' : '0';
+  const res = await fetch('/dashboard/api/logs?only_attacks=' + onlyAttacks);
+  const rows = await res.json();
+  const tbody = document.querySelector('#logs tbody');
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.timestamp}</td>
+      <td>${r.ip || ''}</td>
+      <td>${r.path}</td>
+      <td>${r.attack_type}</td>
+      <td>${r.severity}</td>
+      <td>${r.confidence}</td>
+    </tr>
+  `).join('');
+}
+
+async function loadIntel(){
+  const res = await fetch('/dashboard/api/intel');
+  const rows = await res.json();
+  const tbody = document.querySelector('#intel tbody');
+  tbody.innerHTML = rows.map(r => `
+    <tr><td>${r.ip || ''}</td><td>${r.total}</td><td>${r.attacks}</td><td>${r.max_confidence}</td></tr>
+  `).join('');
+}
+
+document.getElementById('only-attacks').addEventListener('change', loadLogs);
+loadLogs();
+loadIntel();
+setInterval(() => { loadLogs(); loadIntel(); }, 5000);
+</script>
+</body>
+</html>
