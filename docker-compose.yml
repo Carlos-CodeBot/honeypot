@@ -1,0 +1,19 @@
+version: '3.8'
+services:
+  honeypot-web:
+    build: .
+    container_name: honeypot-web
+    ports:
+      - "8000:8000"
+    environment:
+      - SECRET_KEY=${SECRET_KEY:-change-this-secret}
+      - SITE_TITLE=${SITE_TITLE:-Portal Empresarial}
+      - SITE_SUBTITLE=${SITE_SUBTITLE:-Área segura para clientes}
+      - THEME_COLOR=${THEME_COLOR:-#1e3a8a}
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASS=${ADMIN_PASS:-admin123}
+    volumes:
+      - honeypot-data:/app
+    restart: unless-stopped
+volumes:
+  honeypot-data:
