@@ -8,7 +8,7 @@ from functools import wraps
 from flask import Flask, Response, g, jsonify, redirect, render_template, request, session, url_for
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "honeypot.db")
+DB_PATH = os.getenv("DB_PATH", "/data/honeypot.db")
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "change-me-in-production")
@@ -69,6 +69,7 @@ def close_db(exception):
 
 
 def init_db():
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     db = sqlite3.connect(DB_PATH)
     db.execute(
         """

@@ -21,7 +21,7 @@ Honeypot web educativo para capturar, **clasificar** y analizar intentos de ataq
 
 ```bash
 cp .env.example .env
-docker compose up -d --build
+docker compose up -d --build --force-recreate
 ```
 
 - Sitio público: `http://localhost:8000`
@@ -65,6 +65,26 @@ Sí. El clasificador interno ayuda para una primera capa, pero para inteligencia
 3. **Suricata/Zeek** si también quieres telemetría de red además de HTTP app-level.
 
 Puedes exportar los eventos de SQLite periódicamente o enviar eventos en tiempo real a tu pipeline SIEM.
+
+## Troubleshooting (importante)
+
+Si ves que la web no cambia tras actualizar código (por ejemplo `/contacto` devuelve 404), normalmente es por contenedor/imagen anterior en ejecución.
+
+1. Reconstruye e inicia de nuevo:
+
+```bash
+docker compose down
+docker compose up -d --build --force-recreate
+```
+
+2. Verifica que el contenedor use la imagen nueva:
+
+```bash
+docker compose ps
+docker compose logs -f honeypot-web
+```
+
+3. Este proyecto persiste **solo la base de datos** en `/data/honeypot.db`; el código ya no se monta como volumen para evitar que una versión antigua tape los archivos de la imagen.
 
 ## Seguridad operativa
 
