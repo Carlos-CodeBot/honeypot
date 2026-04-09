@@ -15,6 +15,7 @@ services:
       - ADMIN_PASS=${ADMIN_PASS:-admin123}
       - SIEM_HINT=${SIEM_HINT:-crowdsec}
       - DB_PATH=/data/honeypot.db
+      - TRAINING_FILE=${TRAINING_FILE:-/data/training_samples.txt}
     volumes:
       - honeypot-data:/data
     restart: unless-stopped

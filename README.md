@@ -9,6 +9,10 @@ Honeypot web educativo para capturar, **clasificar** y analizar intentos de ataq
 - Frontend más realista y personalizable (landing tipo SaaS, módulos de producto, formulario de contacto, login de clientes).
 - Endpoints con debilidades intencionales (XSS reflejado y login inseguro) para observación de ataques.
 - Motor de clasificación basado en reglas (`SQLi`, `XSS`, `path traversal`, `command injection`, `scanner bot`).
+
+- Clasificación contextual por campo (query/body/path/UA) para reducir falsos positivos y diferenciar mejor XSS vs SQLi.
+- Módulo adaptativo opcional por archivo `.txt` etiquetado (`label\tpayload`) para aprender patrones reales.
+- Gráfica tipo torta (pie chart) con distribución de ataques en el dashboard.
 - Dashboard con:
   - Conteo total de eventos
   - Ataques detectados
@@ -55,6 +59,20 @@ En `.env` puedes ajustar:
 - `/dashboard` panel SOC
 - `/dashboard/api/logs?only_attacks=1` logs clasificados
 - `/dashboard/api/intel` ranking por IP
+
+
+## Entrenamiento adaptativo (opcional)
+
+Puedes crear el archivo `/data/training_samples.txt` con líneas tipo:
+
+```
+# label<TAB>payload
+xss	<script>alert(1)</script>
+sqli	1' OR 1=1 --
+benign	bienvenido a la plataforma
+```
+
+Luego en el dashboard usa **"Recargar entrenamiento"** para que el modelo adaptativo relea el archivo sin reiniciar contenedor.
 
 ## ¿Conviene usar una herramienta existente?
 

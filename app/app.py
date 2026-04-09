@@ -2,6 +2,7 @@ import json
 import os
 import re
 import sqlite3
+from collections import Counter, defaultdict
 from datetime import datetime
 from functools import wraps
 
@@ -9,6 +10,7 @@ from flask import Flask, Response, g, jsonify, redirect, render_template, reques
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.getenv("DB_PATH", "/data/honeypot.db")
+TRAINING_FILE = os.getenv("TRAINING_FILE", "/data/training_samples.txt")
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "change-me-in-production")
@@ -25,33 +27,130 @@ ATTACK_RULES = [
         "name": "sqli",
         "severity": "high",
         "confidence": 0.9,
-        "regex": r"(union\s+select|or\s+1=1|information_schema|sleep\s*\(|benchmark\s*\(|--|/\*|@@version)",
+        "targets": ["query", "body", "path"],
+        "regex": r"(union\s+select|information_schema|sleep\s*\(|benchmark\s*\(|drop\s+table|insert\s+into|select\s+.+\s+from|(?:'|\")\s*or\s+\d+=\d+)",
     },
     {
         "name": "xss",
         "severity": "high",
-        "confidence": 0.85,
-        "regex": r"(<script|javascript:|onerror=|onload=|svg\s+onload)",
+        "confidence": 0.88,
+        "targets": ["query", "body", "path"],
+        "regex": r"(<script|javascript:|onerror=|onload=|<img\s+[^>]*onerror=|<svg\s+[^>]*onload=)",
     },
     {
         "name": "path_traversal",
         "severity": "medium",
         "confidence": 0.8,
+        "targets": ["query", "path"],
         "regex": r"(\.\./|%2e%2e%2f|%252e%252e%252f|etc/passwd|boot.ini)",
     },
     {
         "name": "command_injection",
         "severity": "high",
         "confidence": 0.88,
-        "regex": r"(;\s*(cat|ls|id|whoami)|\|\||&&|`.+`|\$\(.+\))",
+        "targets": ["query", "body"],
+        "regex": r"(;\s*(cat|ls|id|whoami|wget|curl)\b|\|\||&&|`[^`]+`|\$\([^)]+\))",
     },
     {
         "name": "scanner_bot",
         "severity": "medium",
-        "confidence": 0.65,
-        "regex": r"(sqlmap|nikto|nmap|masscan|acunetix|zap|nuclei)",
+        "confidence": 0.7,
+        "targets": ["ua"],
+        "regex": r"(sqlmap|nikto|nmap|masscan|acunetix|zap|nuclei|dirbuster)",
     },
 ]
+
+SEVERITY_WEIGHT = {"low": 1, "medium": 2, "high": 3}
+
+
+class AdaptiveClassifier:
+    def __init__(self):
+        self.label_token_counts = defaultdict(Counter)
+        self.label_counts = Counter()
+        self.loaded = False
+
+    @staticmethod
+    def _tokenize(text):
+        return re.findall(r"[a-z0-9_\-]{2,}", text.lower())
+
+    def load_examples(self, path):
+        self.label_token_counts = defaultdict(Counter)
+        self.label_counts = Counter()
+
+        if not os.path.exists(path):
+            self.loaded = False
+            return
+
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+
+                # Formato esperado: label\tpayload
+                if "\t" not in line:
+                    continue
+                label, payload = line.split("\t", 1)
+                label = label.strip().lower()
+                payload = payload.strip()
+                if not label or not payload:
+                    continue
+
+                self.label_counts[label] += 1
+                for token in self._tokenize(payload):
+                    self.label_token_counts[label][token] += 1
+
+        self.loaded = sum(self.label_counts.values()) > 0
+
+    def predict(self, payload):
+        if not self.loaded:
+            return None
+
+        tokens = self._tokenize(payload)
+        if not tokens:
+            return None
+
+        label_scores = {}
+        vocabulary = set()
+        for c in self.label_token_counts.values():
+            vocabulary.update(c.keys())
+        v_size = max(len(vocabulary), 1)
+
+        for label, token_counts in self.label_token_counts.items():
+            total_tokens = sum(token_counts.values()) + v_size
+            prior = self.label_counts[label] / max(sum(self.label_counts.values()), 1)
+            score = prior
+            for token in tokens:
+                score *= (token_counts[token] + 1) / total_tokens
+            label_scores[label] = score
+
+        if not label_scores:
+            return None
+
+        best_label = max(label_scores, key=label_scores.get)
+        total = sum(label_scores.values())
+        confidence = round((label_scores[best_label] / total), 2) if total > 0 else 0.0
+
+        if best_label == "benign":
+            return {
+                "is_attack": 0,
+                "attack_type": "benign",
+                "severity": "low",
+                "confidence": confidence,
+                "notes": "adaptive_model=benign",
+            }
+
+        severity = "medium" if best_label in {"xss", "path_traversal", "scanner_bot"} else "high"
+        return {
+            "is_attack": 1,
+            "attack_type": best_label,
+            "severity": severity,
+            "confidence": confidence,
+            "notes": "adaptive_model",
+        }
+
+
+adaptive_model = AdaptiveClassifier()
 
 
 def get_db():
@@ -107,33 +206,45 @@ def init_db():
     db.commit()
     db.close()
 
+    adaptive_model.load_examples(TRAINING_FILE)
 
-def detect_attack(payload):
+
+def detect_attack(features):
     matches = []
     max_confidence = 0.0
     severity = "low"
 
     for rule in ATTACK_RULES:
-        if re.search(rule["regex"], payload, flags=re.IGNORECASE):
+        target_payload = " ".join(features.get(t, "") for t in rule["targets"])
+        if re.search(rule["regex"], target_payload, flags=re.IGNORECASE):
             matches.append(rule["name"])
             max_confidence = max(max_confidence, rule["confidence"])
-            if rule["severity"] == "high":
-                severity = "high"
-            elif rule["severity"] == "medium" and severity != "high":
-                severity = "medium"
+            if SEVERITY_WEIGHT[rule["severity"]] > SEVERITY_WEIGHT[severity]:
+                severity = rule["severity"]
 
-    is_attack = bool(matches)
-    attack_type = ",".join(sorted(set(matches))) if matches else "benign"
+    if matches:
+        attack_type = ",".join(sorted(set(matches)))
+        if len(matches) >= 2:
+            max_confidence = min(0.98, max_confidence + 0.07)
+        return {
+            "is_attack": 1,
+            "attack_type": attack_type,
+            "severity": severity,
+            "confidence": round(max_confidence, 2),
+            "notes": f"rules={attack_type}",
+        }
 
-    if len(matches) >= 2:
-        max_confidence = min(0.98, max_confidence + 0.08)
+    ml_payload = " ".join([features.get("query", ""), features.get("body", ""), features.get("path", "")])
+    learned = adaptive_model.predict(ml_payload)
+    if learned:
+        return learned
 
     return {
-        "is_attack": 1 if is_attack else 0,
-        "attack_type": attack_type,
-        "severity": severity,
-        "confidence": round(max_confidence, 2) if is_attack else 0.0,
-        "notes": f"rules={attack_type}" if is_attack else "",
+        "is_attack": 0,
+        "attack_type": "benign",
+        "severity": "low",
+        "confidence": 0.0,
+        "notes": "",
     }
 
 
@@ -184,17 +295,22 @@ def basic_auth_required(f):
 
 @app.before_request
 def global_logger():
-    ignore_paths = {"/dashboard", "/dashboard/api/logs", "/dashboard/api/intel", "/static/style.css"}
+    ignore_paths = {
+        "/dashboard",
+        "/dashboard/api/logs",
+        "/dashboard/api/intel",
+        "/dashboard/api/distribution",
+        "/dashboard/reload-training",
+        "/static/style.css",
+    }
     if request.path not in ignore_paths:
-        payload = " ".join(
-            [
-                request.path,
-                request.query_string.decode("utf-8", errors="ignore"),
-                request.get_data(as_text=True),
-                json.dumps(dict(request.headers)),
-            ]
-        ).lower()
-        classification = detect_attack(payload)
+        features = {
+            "path": request.path.lower(),
+            "query": request.query_string.decode("utf-8", errors="ignore").lower(),
+            "body": request.get_data(as_text=True).lower(),
+            "ua": request.headers.get("User-Agent", "").lower(),
+        }
+        classification = detect_attack(features)
         log_event(classification)
 
 
@@ -281,7 +397,16 @@ def dashboard():
         stats=stats,
         top_types=[dict(x) for x in top_types],
         siem_hint=app.config["SIEM_HINT"],
+        training_file=TRAINING_FILE,
+        model_loaded=adaptive_model.loaded,
     )
+
+
+@app.route("/dashboard/reload-training", methods=["POST"])
+@basic_auth_required
+def reload_training():
+    adaptive_model.load_examples(TRAINING_FILE)
+    return jsonify({"ok": True, "model_loaded": adaptive_model.loaded, "training_file": TRAINING_FILE})
 
 
 @app.route("/dashboard/api/logs")
@@ -332,6 +457,22 @@ def dashboard_intel():
         """
     ).fetchall()
 
+    return jsonify([dict(row) for row in rows])
+
+
+@app.route("/dashboard/api/distribution")
+@basic_auth_required
+def dashboard_distribution():
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT attack_type, COUNT(*) AS total
+        FROM attack_logs
+        WHERE is_attack = 1
+        GROUP BY attack_type
+        ORDER BY total DESC
+        """
+    ).fetchall()
     return jsonify([dict(row) for row in rows])
 
 
