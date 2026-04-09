@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>{{ config['SITE_TITLE'] }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <style>:root{--theme-color: {{ config['THEME_COLOR'] }};}</style>
+</head>
+<body>
+  <header>
+    <h1>{{ config['SITE_TITLE'] }}</h1>
+    <p>{{ config['SITE_SUBTITLE'] }}</p>
+  </header>
+  <main>
+    <section class="card">
+      <h2>Iniciar sesión</h2>
+      <a class="btn" href="{{ url_for('login') }}">Entrar</a>
+    </section>
+    <section class="card">
+      <h2>Buscador</h2>
+      <form action="/search" method="get">
+        <input name="q" placeholder="Buscar productos...">
+        <button>Buscar</button>
+      </form>
+      {% if promo %}<div class="promo">Promo activa: {{ promo|safe }}</div>{% endif %}
+    </section>
+  </main>
+</body>
+</html>

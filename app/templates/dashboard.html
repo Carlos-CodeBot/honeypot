@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Dashboard Honeypot</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header>
+    <h1>Dashboard de ataques</h1>
+  </header>
+  <main>
+    <div class="grid">
+      <div class="card"><h3>Total eventos</h3><p>{{ stats['total'] }}</p></div>
+      <div class="card"><h3>IPs únicas</h3><p>{{ stats['unique_ips'] }}</p></div>
+      <div class="card"><h3>Sospechosos</h3><p>{{ stats['suspicious'] or 0 }}</p></div>
+    </div>
+    <section class="card">
+      <h3>Últimos eventos</h3>
+      <table id="logs">
+        <thead><tr><th>Fecha</th><th>IP</th><th>Método</th><th>Ruta</th><th>Indicadores</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </main>
+<script>
+async function loadLogs(){
+  const res = await fetch('/dashboard/api/logs');
+  const rows = await res.json();
+  const tbody = document.querySelector('#logs tbody');
+  tbody.innerHTML = rows.map(r => `<tr><td>${r.timestamp}</td><td>${r.ip||''}</td><td>${r.method}</td><td>${r.path}</td><td>${r.notes||''}</td></tr>`).join('');
+}
+loadLogs();
+setInterval(loadLogs, 5000);
+</script>
+</body>
+</html>
