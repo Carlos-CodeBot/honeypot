@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Contacto</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="container">
+    <section class="card narrow">
+      <h1>Habla con ventas</h1>
+      {% if success %}
+        <p>Gracias por tu mensaje. Un asesor se pondrá en contacto contigo.</p>
+      {% else %}
+      <form method="post">
+        <label>Nombre <input name="name"></label>
+        <label>Email <input name="email"></label>
+        <label>Empresa <input name="company"></label>
+        <label>Mensaje <input name="message"></label>
+        <button>Enviar</button>
+      </form>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>
