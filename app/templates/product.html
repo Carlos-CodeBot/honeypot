@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Producto {{ slug }}</title>
+  <title>Facultad {{ slug }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
   <main class="container">
     <section class="card">
-      <h1>Módulo {{ slug|upper }}</h1>
-      <p>Automatiza tus operaciones con nuestro módulo {{ slug }}. Solicita una demo personalizada.</p>
-      <a class="btn" href="{{ url_for('contact') }}">Solicitar demo</a>
+      <h1>Facultad {{ slug|upper }}</h1>
+      <p>Conoce planes de estudio, líneas de investigación y procesos de admisión para la facultad de {{ slug }}.</p>
+      <a class="btn" href="{{ url_for('contact') }}">Solicitar información</a>
     </section>
   </main>
 </body>
