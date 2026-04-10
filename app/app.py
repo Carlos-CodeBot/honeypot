@@ -25,7 +25,7 @@ FILTER_SCRIPT = os.getenv("FILTER_SCRIPT", os.path.join(BASE_DIR, "filtro", "oss
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "change-me-in-production")
-app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_UPLOAD_SIZE", "2097152"))
+app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_UPLOAD_SIZE", "10485760"))
 app.config["SITE_TITLE"] = os.getenv("SITE_TITLE", "NovaCore Cloud")
 app.config["SITE_SUBTITLE"] = os.getenv("SITE_SUBTITLE", "Infraestructura digital para empresas en crecimiento")
 app.config["THEME_COLOR"] = os.getenv("THEME_COLOR", "#1f3aed")

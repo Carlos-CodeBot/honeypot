@@ -90,7 +90,7 @@ Cuando el CSV no incluye `label`, la app intenta inferir la clase (`xss`, `sqli`
 La vista de carga del dashboard aplica:
 
 - Autenticación Basic Auth del dashboard.
-- Límite de tamaño (`MAX_UPLOAD_SIZE`, por defecto 2 MB).
+- Límite de tamaño (`MAX_UPLOAD_SIZE`, por defecto 10 MB).
 - Validación de extensión (`.txt`, `.csv`).
 - Normalización de nombre con `secure_filename`.
 - Parseo controlado (sin ejecución de código del archivo).
