@@ -8,17 +8,12 @@ Honeypot web educativo para capturar, **clasificar** y analizar intentos de ataq
 
 - Frontend más realista y personalizable (landing tipo SaaS, módulos de producto, formulario de contacto, login de clientes).
 - Endpoints con debilidades intencionales (XSS reflejado y login inseguro) para observación de ataques.
-- Motor de clasificación basado en reglas (`SQLi`, `XSS`, `path traversal`, `command injection`, `scanner bot`).
-
-- Clasificación contextual por campo (query/body/path/UA) para reducir falsos positivos y diferenciar mejor XSS vs SQLi.
-- Módulo adaptativo opcional por archivo `.txt` etiquetado (`label\tpayload`) para aprender patrones reales.
-- Gráfica tipo torta (pie chart) con distribución de ataques en el dashboard.
-- Dashboard con:
-  - Conteo total de eventos
-  - Ataques detectados
-  - Alta severidad
-  - Top de técnicas detectadas
-  - Tabla de inteligencia por IP (eventos/ataques/confianza)
+- Motor de clasificación por reglas, ajustado para reducir falsos positivos y **priorizar XSS correctamente** frente a SQLi cuando corresponde.
+- Clasificador adaptativo con **red neuronal MLP** (`scikit-learn`) entrenable desde dashboard.
+- Carga segura de dataset (`.txt` / `.csv`) para entrenar con salidas de OSSEC/filtro.
+- Integración con script de filtro OSSEC (`app/filtro/ossec_filter.py`) para transformar `.txt` a CSV de entrenamiento.
+- Gráfica tipo torta (pie chart) con distribución de ataques.
+- Dashboard con métricas, tabla de eventos e inteligencia por IP.
 - Docker + Docker Compose para despliegue rápido.
 
 ## Instalación
@@ -46,7 +41,11 @@ En `.env` puedes ajustar:
 - `THEME_COLOR`
 - `ADMIN_USER`
 - `ADMIN_PASS`
-- `SIEM_HINT` (texto mostrado en dashboard para herramienta recomendada)
+- `SIEM_HINT`
+- `TRAINING_FILE`
+- `MODEL_PATH`
+- `MAX_UPLOAD_SIZE`
+- `FILTER_SCRIPT`
 
 ## Endpoints relevantes
 
@@ -57,52 +56,57 @@ En `.env` puedes ajustar:
 - `/internal` área interna simulada
 - `/search?q=...` vulnerable a XSS reflejado (intencional)
 - `/dashboard` panel SOC
+- `/dashboard/upload-ossec` subida segura de dataset para entrenar
+- `/dashboard/reload-training` recarga entrenamiento desde `TRAINING_FILE`
 - `/dashboard/api/logs?only_attacks=1` logs clasificados
 - `/dashboard/api/intel` ranking por IP
+- `/dashboard/api/distribution` distribución para gráfica
 
+## Formatos de dataset para entrenamiento
 
-## Entrenamiento adaptativo (opcional)
+### TXT (recomendado)
 
-Puedes crear el archivo `/data/training_samples.txt` con líneas tipo:
-
-```
-# label<TAB>payload
+```txt
 xss	<script>alert(1)</script>
 sqli	1' OR 1=1 --
-benign	bienvenido a la plataforma
+benign	consulta normal de producto
 ```
 
-Luego en el dashboard usa **"Recargar entrenamiento"** para que el modelo adaptativo relea el archivo sin reiniciar contenedor.
+Si subes un `.txt` de OSSEC, el backend primero ejecuta el script configurado en `FILTER_SCRIPT` (por defecto `app/filtro/ossec_filter.py`) para generar un CSV intermedio (`label,payload`) y entrenar el modelo con ese resultado.
+El filtro está adaptado al formato de tu script y genera columnas: `Metodo,Cuerpo_Peticion,Codigo_Respuesta`. El backend transforma esas filas a texto de entrenamiento y les infiere una etiqueta de ataque automáticamente.
 
-## ¿Conviene usar una herramienta existente?
+### CSV
 
-Sí. El clasificador interno ayuda para una primera capa, pero para inteligencia más sólida es recomendable integrar:
+Se recomiendan columnas:
 
-1. **CrowdSec** para decisiones colaborativas y bloqueo automático.
-2. **Wazuh + Elastic/OpenSearch** para correlación multi-fuente.
-3. **Suricata/Zeek** si también quieres telemetría de red además de HTTP app-level.
+- `label`
+- `payload`
 
-Puedes exportar los eventos de SQLite periódicamente o enviar eventos en tiempo real a tu pipeline SIEM.
+También se intentan mapear nombres alternativos como `attack_type`, `type`, `request`, `message`.
+Cuando el CSV no incluye `label`, la app intenta inferir la clase (`xss`, `sqli`, etc.) desde `Cuerpo_Peticion` y `Codigo_Respuesta`.
 
-## Troubleshooting (importante)
+## Seguridad de la carga de archivos
 
-Si ves que la web no cambia tras actualizar código (por ejemplo `/contacto` devuelve 404), normalmente es por contenedor/imagen anterior en ejecución.
+La vista de carga del dashboard aplica:
 
-1. Reconstruye e inicia de nuevo:
+- Autenticación Basic Auth del dashboard.
+- Límite de tamaño (`MAX_UPLOAD_SIZE`, por defecto 2 MB).
+- Validación de extensión (`.txt`, `.csv`).
+- Normalización de nombre con `secure_filename`.
+- Parseo controlado (sin ejecución de código del archivo).
+
+## Troubleshooting
+
+Si ves que la web no cambia tras actualizar código:
 
 ```bash
 docker compose down
 docker compose up -d --build --force-recreate
-```
-
-2. Verifica que el contenedor use la imagen nueva:
-
-```bash
 docker compose ps
 docker compose logs -f honeypot-web
 ```
 
-3. Este proyecto persiste **solo la base de datos** en `/data/honeypot.db`; el código ya no se monta como volumen para evitar que una versión antigua tape los archivos de la imagen.
+Este proyecto persiste **solo la base de datos/modelo** en `/data` para evitar que volúmenes antiguos oculten cambios del código.
 
 ## Seguridad operativa
 

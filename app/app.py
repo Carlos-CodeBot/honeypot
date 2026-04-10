@@ -1,19 +1,31 @@
-import json
+import csv
+import io
 import os
 import re
 import sqlite3
-from collections import Counter, defaultdict
+import subprocess
+import sys
+import tempfile
 from datetime import datetime
 from functools import wraps
+from urllib.parse import unquote_plus
 
+import joblib
 from flask import Flask, Response, g, jsonify, redirect, render_template, request, session, url_for
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.neural_network import MLPClassifier
+from sklearn.pipeline import Pipeline
+from werkzeug.utils import secure_filename
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.getenv("DB_PATH", "/data/honeypot.db")
 TRAINING_FILE = os.getenv("TRAINING_FILE", "/data/training_samples.txt")
+MODEL_PATH = os.getenv("MODEL_PATH", "/data/adaptive_model.joblib")
+FILTER_SCRIPT = os.getenv("FILTER_SCRIPT", os.path.join(BASE_DIR, "filtro", "ossec_filter.py"))
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "change-me-in-production")
+app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_UPLOAD_SIZE", "2097152"))
 app.config["SITE_TITLE"] = os.getenv("SITE_TITLE", "NovaCore Cloud")
 app.config["SITE_SUBTITLE"] = os.getenv("SITE_SUBTITLE", "Infraestructura digital para empresas en crecimiento")
 app.config["THEME_COLOR"] = os.getenv("THEME_COLOR", "#1f3aed")
@@ -24,133 +36,272 @@ app.config["SIEM_HINT"] = os.getenv("SIEM_HINT", "crowdsec")
 
 ATTACK_RULES = [
     {
+        "name": "xss",
+        "severity": "high",
+        "confidence": 0.93,
+        "targets": ["query", "body", "path"],
+        "regex": r"(<\s*script\b|javascript:|on\w+\s*=|<\s*img\b[^>]*\bon\w+\s*=|<\s*svg\b)",
+    },
+    {
         "name": "sqli",
         "severity": "high",
         "confidence": 0.9,
         "targets": ["query", "body", "path"],
-        "regex": r"(union\s+select|information_schema|sleep\s*\(|benchmark\s*\(|drop\s+table|insert\s+into|select\s+.+\s+from|(?:'|\")\s*or\s+\d+=\d+)",
-    },
-    {
-        "name": "xss",
-        "severity": "high",
-        "confidence": 0.88,
-        "targets": ["query", "body", "path"],
-        "regex": r"(<script|javascript:|onerror=|onload=|<img\s+[^>]*onerror=|<svg\s+[^>]*onload=)",
+        "regex": r"(union\s+all?\s+select|information_schema|(?:'|\")\s*(?:or|and)\s*(?:'\d+'|\d+)\s*=\s*(?:'\d+'|\d+)|\b(?:sleep|benchmark)\s*\(|waitfor\s+delay|/\*\!\d+)",
     },
     {
         "name": "path_traversal",
         "severity": "medium",
-        "confidence": 0.8,
+        "confidence": 0.83,
         "targets": ["query", "path"],
-        "regex": r"(\.\./|%2e%2e%2f|%252e%252e%252f|etc/passwd|boot.ini)",
+        "regex": r"(\.\./|%2e%2e%2f|%252e%252e%252f|etc/passwd|boot\.ini)",
     },
     {
         "name": "command_injection",
         "severity": "high",
-        "confidence": 0.88,
+        "confidence": 0.86,
         "targets": ["query", "body"],
-        "regex": r"(;\s*(cat|ls|id|whoami|wget|curl)\b|\|\||&&|`[^`]+`|\$\([^)]+\))",
+        "regex": r"(;\s*(cat|ls|id|whoami|wget|curl|nc|bash)\b|\|\||&&|`[^`]+`|\$\([^)]+\))",
     },
     {
         "name": "scanner_bot",
         "severity": "medium",
-        "confidence": 0.7,
+        "confidence": 0.72,
         "targets": ["ua"],
         "regex": r"(sqlmap|nikto|nmap|masscan|acunetix|zap|nuclei|dirbuster)",
     },
 ]
 
 SEVERITY_WEIGHT = {"low": 1, "medium": 2, "high": 3}
+ALLOWED_UPLOAD_EXTENSIONS = {".txt", ".csv"}
+VALID_LABELS = {"xss", "sqli", "path_traversal", "command_injection", "scanner_bot", "benign"}
+DEFAULT_BENIGN_SAMPLES = [
+    "GET /",
+    "GET /contacto",
+    "GET /producto/crm",
+    "POST /contacto nombre=juan email=demo@empresa.com",
+    "GET /search?q=precios+planes",
+    "GET /api/health",
+]
 
 
 class AdaptiveClassifier:
-    def __init__(self):
-        self.label_token_counts = defaultdict(Counter)
-        self.label_counts = Counter()
+    def __init__(self, model_path):
+        self.model_path = model_path
+        self.pipeline = None
+        self.labels = []
         self.loaded = False
+        self.samples_seen = 0
 
-    @staticmethod
-    def _tokenize(text):
-        return re.findall(r"[a-z0-9_\-]{2,}", text.lower())
-
-    def load_examples(self, path):
-        self.label_token_counts = defaultdict(Counter)
-        self.label_counts = Counter()
-
-        if not os.path.exists(path):
+    def load_persisted(self):
+        if not os.path.exists(self.model_path):
             self.loaded = False
             return
 
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
+        artifact = joblib.load(self.model_path)
+        self.pipeline = artifact.get("pipeline")
+        self.labels = artifact.get("labels", [])
+        self.samples_seen = artifact.get("samples_seen", 0)
+        self.loaded = self.pipeline is not None
 
-                # Formato esperado: label\tpayload
-                if "\t" not in line:
-                    continue
-                label, payload = line.split("\t", 1)
-                label = label.strip().lower()
-                payload = payload.strip()
-                if not label or not payload:
-                    continue
+    def train_from_samples(self, samples):
+        texts = []
+        labels = []
+        for label, payload in samples:
+            if label in VALID_LABELS and payload:
+                texts.append(payload[:3000])
+                labels.append(label)
 
-                self.label_counts[label] += 1
-                for token in self._tokenize(payload):
-                    self.label_token_counts[label][token] += 1
+        if "benign" not in set(labels):
+            for sample in DEFAULT_BENIGN_SAMPLES:
+                texts.append(sample)
+                labels.append("benign")
 
-        self.loaded = sum(self.label_counts.values()) > 0
+        unique_labels = set(labels)
+        if len(texts) < 25 or len(unique_labels) < 2:
+            return {
+                "ok": False,
+                "error": "dataset_insuficiente",
+                "detail": "Se requieren al menos 25 muestras y 2 clases.",
+            }
+
+        self.pipeline = Pipeline(
+            [
+                (
+                    "tfidf",
+                    TfidfVectorizer(
+                        analyzer="char_wb",
+                        ngram_range=(3, 5),
+                        lowercase=True,
+                        max_features=25000,
+                    ),
+                ),
+                (
+                    "mlp",
+                    MLPClassifier(
+                        hidden_layer_sizes=(64, 32),
+                        activation="relu",
+                        solver="adam",
+                        max_iter=250,
+                        random_state=42,
+                        early_stopping=True,
+                        validation_fraction=0.15,
+                        n_iter_no_change=8,
+                    ),
+                ),
+            ]
+        )
+        self.pipeline.fit(texts, labels)
+        self.labels = sorted(unique_labels)
+        self.samples_seen = len(texts)
+        self.loaded = True
+
+        os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
+        joblib.dump(
+            {
+                "pipeline": self.pipeline,
+                "labels": self.labels,
+                "samples_seen": self.samples_seen,
+            },
+            self.model_path,
+        )
+        return {"ok": True, "samples": self.samples_seen, "labels": self.labels}
 
     def predict(self, payload):
-        if not self.loaded:
+        if not self.loaded or not payload.strip():
             return None
 
-        tokens = self._tokenize(payload)
-        if not tokens:
-            return None
+        proba = self.pipeline.predict_proba([payload])[0]
+        classes = self.pipeline.classes_
+        best_idx = int(proba.argmax())
+        best_label = classes[best_idx]
+        confidence = float(round(proba[best_idx], 2))
 
-        label_scores = {}
-        vocabulary = set()
-        for c in self.label_token_counts.values():
-            vocabulary.update(c.keys())
-        v_size = max(len(vocabulary), 1)
-
-        for label, token_counts in self.label_token_counts.items():
-            total_tokens = sum(token_counts.values()) + v_size
-            prior = self.label_counts[label] / max(sum(self.label_counts.values()), 1)
-            score = prior
-            for token in tokens:
-                score *= (token_counts[token] + 1) / total_tokens
-            label_scores[label] = score
-
-        if not label_scores:
-            return None
-
-        best_label = max(label_scores, key=label_scores.get)
-        total = sum(label_scores.values())
-        confidence = round((label_scores[best_label] / total), 2) if total > 0 else 0.0
-
-        if best_label == "benign":
+        if best_label == "benign" or confidence < 0.62:
             return {
                 "is_attack": 0,
                 "attack_type": "benign",
                 "severity": "low",
                 "confidence": confidence,
-                "notes": "adaptive_model=benign",
+                "notes": "mlp_model=benign_or_low_confidence",
             }
 
-        severity = "medium" if best_label in {"xss", "path_traversal", "scanner_bot"} else "high"
+        severity = "medium" if best_label in {"path_traversal", "scanner_bot"} else "high"
         return {
             "is_attack": 1,
             "attack_type": best_label,
             "severity": severity,
             "confidence": confidence,
-            "notes": "adaptive_model",
+            "notes": "mlp_model",
         }
 
 
-adaptive_model = AdaptiveClassifier()
+adaptive_model = AdaptiveClassifier(MODEL_PATH)
+
+
+def normalize_label(raw_label, payload):
+    label = (raw_label or "").strip().lower().replace(" ", "_")
+    mapping = {
+        "sqli": "sqli",
+        "sql_injection": "sqli",
+        "xss_attack": "xss",
+        "cmdi": "command_injection",
+        "rce": "command_injection",
+        "attack": "command_injection",
+        "malicious": "command_injection",
+        "normal": "benign",
+    }
+    label = mapping.get(label, label)
+    if label in VALID_LABELS:
+        return label
+
+    inferred = infer_attack_type(payload)
+    return inferred if inferred else "benign"
+
+
+def infer_attack_type(payload):
+    normalized = decode_payload(payload)
+    for rule in ATTACK_RULES:
+        if rule["name"] == "scanner_bot":
+            continue
+        if re.search(rule["regex"], normalized, flags=re.IGNORECASE):
+            return rule["name"]
+    return None
+
+
+def decode_payload(payload):
+    return unquote_plus((payload or "").strip()).lower()
+
+
+def parse_uploaded_training(content, filename):
+    samples = []
+    ext = os.path.splitext(filename.lower())[1]
+
+    if ext == ".csv":
+        reader = csv.DictReader(io.StringIO(content))
+        for row in reader:
+            label = row.get("label") or row.get("attack_type") or row.get("type") or row.get("class")
+            method = (row.get("Metodo") or row.get("method") or "").strip().upper()
+            request_body = (row.get("Cuerpo_Peticion") or "").strip()
+            response_code = (row.get("Codigo_Respuesta") or "").strip()
+            payload = row.get("payload") or row.get("request") or row.get("query") or row.get("raw") or row.get("message")
+            if not payload and request_body:
+                payload = f"{method} {request_body} status={response_code}".strip()
+            if payload:
+                normalized_label = normalize_label(label, payload) if label else infer_label_from_csv_payload(payload, response_code)
+                samples.append((normalized_label, payload.strip()))
+    else:
+        for line in content.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+
+            if "\t" in line:
+                label, payload = line.split("\t", 1)
+            elif ";" in line:
+                label, payload = line.split(";", 1)
+            else:
+                label, payload = "attack", line
+
+            payload = payload.strip()
+            if payload:
+                samples.append((normalize_label(label, payload), payload))
+
+    return samples
+
+
+def infer_label_from_csv_payload(payload, response_code):
+    inferred = infer_attack_type(payload)
+    if inferred:
+        return inferred
+
+    if response_code and response_code.isdigit() and int(response_code) in {401, 403, 404, 405, 406, 429}:
+        return "scanner_bot"
+    return "command_injection"
+
+
+def process_ossec_txt_with_filter(upload_text):
+    if not os.path.exists(FILTER_SCRIPT):
+        return None, f"filter_script_not_found: {FILTER_SCRIPT}"
+
+    with tempfile.TemporaryDirectory(prefix="ossec_upload_") as tmp_dir:
+        input_path = os.path.join(tmp_dir, "input_ossec.txt")
+        output_path = os.path.join(tmp_dir, "filtered.csv")
+
+        with open(input_path, "w", encoding="utf-8") as input_file:
+            input_file.write(upload_text)
+
+        cmd = [sys.executable, FILTER_SCRIPT, "--input", input_path, "--output", output_path]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20, check=False)
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "unknown_error").strip()[:500]
+            return None, f"filter_script_failed: {detail}"
+
+        if not os.path.exists(output_path):
+            return None, "filter_script_no_output"
+
+        with open(output_path, "r", encoding="utf-8", errors="ignore") as output_file:
+            return output_file.read(), None
 
 
 def get_db():
@@ -206,33 +357,36 @@ def init_db():
     db.commit()
     db.close()
 
-    adaptive_model.load_examples(TRAINING_FILE)
+    adaptive_model.load_persisted()
+    if not adaptive_model.loaded and os.path.exists(TRAINING_FILE):
+        with open(TRAINING_FILE, "r", encoding="utf-8", errors="ignore") as file_obj:
+            samples = parse_uploaded_training(file_obj.read(), TRAINING_FILE)
+        adaptive_model.train_from_samples(samples)
 
 
 def detect_attack(features):
-    matches = []
-    max_confidence = 0.0
-    severity = "low"
+    best = None
 
     for rule in ATTACK_RULES:
         target_payload = " ".join(features.get(t, "") for t in rule["targets"])
         if re.search(rule["regex"], target_payload, flags=re.IGNORECASE):
-            matches.append(rule["name"])
-            max_confidence = max(max_confidence, rule["confidence"])
-            if SEVERITY_WEIGHT[rule["severity"]] > SEVERITY_WEIGHT[severity]:
-                severity = rule["severity"]
+            candidate = {
+                "is_attack": 1,
+                "attack_type": rule["name"],
+                "severity": rule["severity"],
+                "confidence": round(rule["confidence"], 2),
+                "notes": f"rules={rule['name']}",
+            }
+            if not best:
+                best = candidate
+            else:
+                current_weight = (SEVERITY_WEIGHT[best["severity"]], best["confidence"])
+                candidate_weight = (SEVERITY_WEIGHT[candidate["severity"]], candidate["confidence"])
+                if candidate_weight > current_weight:
+                    best = candidate
 
-    if matches:
-        attack_type = ",".join(sorted(set(matches)))
-        if len(matches) >= 2:
-            max_confidence = min(0.98, max_confidence + 0.07)
-        return {
-            "is_attack": 1,
-            "attack_type": attack_type,
-            "severity": severity,
-            "confidence": round(max_confidence, 2),
-            "notes": f"rules={attack_type}",
-        }
+    if best:
+        return best
 
     ml_payload = " ".join([features.get("query", ""), features.get("body", ""), features.get("path", "")])
     learned = adaptive_model.predict(ml_payload)
@@ -293,6 +447,11 @@ def basic_auth_required(f):
     return decorated
 
 
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    return jsonify({"ok": False, "error": "file_too_large", "max_bytes": app.config["MAX_CONTENT_LENGTH"]}), 413
+
+
 @app.before_request
 def global_logger():
     ignore_paths = {
@@ -301,14 +460,15 @@ def global_logger():
         "/dashboard/api/intel",
         "/dashboard/api/distribution",
         "/dashboard/reload-training",
+        "/dashboard/upload-ossec",
         "/static/style.css",
     }
     if request.path not in ignore_paths:
         features = {
-            "path": request.path.lower(),
-            "query": request.query_string.decode("utf-8", errors="ignore").lower(),
-            "body": request.get_data(as_text=True).lower(),
-            "ua": request.headers.get("User-Agent", "").lower(),
+            "path": decode_payload(request.path),
+            "query": decode_payload(request.query_string.decode("utf-8", errors="ignore")),
+            "body": decode_payload(request.get_data(as_text=True)),
+            "ua": decode_payload(request.headers.get("User-Agent", "")),
         }
         classification = detect_attack(features)
         log_event(classification)
@@ -333,7 +493,6 @@ def contact():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    # Vulnerabilidad intencional: validación insegura para simular SQLi
     if request.method == "POST":
         username = request.form.get("username", "")
         password = request.form.get("password", "")
@@ -355,7 +514,6 @@ def internal():
 
 @app.route("/search")
 def search():
-    # Vulnerabilidad intencional: renderizado de input sin sanitizar (XSS)
     q = request.args.get("q", "")
     template = f"<h3>Resultados para: {q}</h3><p>No se encontraron coincidencias.</p>"
     return template
@@ -399,14 +557,71 @@ def dashboard():
         siem_hint=app.config["SIEM_HINT"],
         training_file=TRAINING_FILE,
         model_loaded=adaptive_model.loaded,
+        model_samples=adaptive_model.samples_seen,
+        max_upload_size=app.config["MAX_CONTENT_LENGTH"],
     )
 
 
 @app.route("/dashboard/reload-training", methods=["POST"])
 @basic_auth_required
 def reload_training():
-    adaptive_model.load_examples(TRAINING_FILE)
-    return jsonify({"ok": True, "model_loaded": adaptive_model.loaded, "training_file": TRAINING_FILE})
+    if not os.path.exists(TRAINING_FILE):
+        return jsonify({"ok": False, "error": "training_file_not_found", "training_file": TRAINING_FILE}), 404
+
+    with open(TRAINING_FILE, "r", encoding="utf-8", errors="ignore") as file_obj:
+        samples = parse_uploaded_training(file_obj.read(), TRAINING_FILE)
+    result = adaptive_model.train_from_samples(samples)
+    status = 200 if result.get("ok") else 400
+    result["training_file"] = TRAINING_FILE
+    return jsonify(result), status
+
+
+@app.route("/dashboard/upload-ossec", methods=["POST"])
+@basic_auth_required
+def upload_ossec_file():
+    upload = request.files.get("dataset")
+    if not upload or not upload.filename:
+        return jsonify({"ok": False, "error": "missing_file"}), 400
+
+    safe_name = secure_filename(upload.filename)
+    ext = os.path.splitext(safe_name.lower())[1]
+    if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+        return jsonify({"ok": False, "error": "invalid_extension", "allowed": sorted(ALLOWED_UPLOAD_EXTENSIONS)}), 400
+
+    content = upload.stream.read().decode("utf-8", errors="ignore")
+    normalized_content = content
+
+    if ext == ".txt":
+        filtered_csv, filter_error = process_ossec_txt_with_filter(content)
+        if filtered_csv:
+            normalized_content = filtered_csv
+            safe_name = "filtered_from_ossec.csv"
+        else:
+            return jsonify({"ok": False, "error": "filter_processing_failed", "detail": filter_error}), 400
+
+    samples = parse_uploaded_training(normalized_content, safe_name)
+    if len(samples) < 25:
+        return jsonify({"ok": False, "error": "dataset_insuficiente", "detail": "Se detectaron menos de 25 filas útiles."}), 400
+
+    result = adaptive_model.train_from_samples(samples)
+    if not result.get("ok"):
+        return jsonify(result), 400
+
+    os.makedirs(os.path.dirname(TRAINING_FILE), exist_ok=True)
+    with open(TRAINING_FILE, "w", encoding="utf-8") as file_obj:
+        for label, payload in samples:
+            file_obj.write(f"{label}\t{payload[:3000]}\n")
+
+    return jsonify(
+        {
+            "ok": True,
+            "filename": safe_name,
+            "samples": result["samples"],
+            "labels": result["labels"],
+            "training_file": TRAINING_FILE,
+            "model_path": MODEL_PATH,
+        }
+    )
 
 
 @app.route("/dashboard/api/logs")

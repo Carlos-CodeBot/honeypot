@@ -35,11 +35,17 @@
     </section>
 
     <section class="card">
-      <h3>Modelo adaptativo (archivo de entrenamiento)</h3>
-      <p>Archivo: <code>{{ training_file }}</code></p>
-      <p>Estado: <strong id="model-state">{{ 'cargado' if model_loaded else 'no cargado' }}</strong></p>
-      <p>Formato esperado por línea: <code>label\tpayload</code> (ej: <code>xss\t&lt;script&gt;alert(1)&lt;/script&gt;</code>).</p>
-      <button id="reload-model">Recargar entrenamiento</button>
+      <h3>Entrenamiento con archivo OSSEC/filtro</h3>
+      <p>Archivo actual: <code>{{ training_file }}</code></p>
+      <p>Estado: <strong id="model-state">{{ 'cargado' if model_loaded else 'no cargado' }}</strong> ({{ model_samples }} muestras)</p>
+      <p>Sube un <code>.csv</code> (columnas sugeridas: <code>label,payload</code> o <code>Metodo,Cuerpo_Peticion,Codigo_Respuesta</code>) o un <code>.txt</code> de OSSEC (se procesa con el filtro de <code>/app/filtro/ossec_filter.py</code>). Máx: {{ max_upload_size }} bytes.</p>
+
+      <form id="upload-form" enctype="multipart/form-data">
+        <input id="dataset" type="file" name="dataset" accept=".txt,.csv" required>
+        <button type="submit">Subir y entrenar</button>
+        <button type="button" id="reload-model">Recargar desde disco</button>
+      </form>
+      <pre id="train-status"></pre>
     </section>
 
     <section class="card">
@@ -57,7 +63,7 @@
 
     <section class="card">
       <h3>Inteligencia por IP</h3>
-      <p>Este honeypot clasifica tráfico con reglas y modelo adaptativo. Para producción puedes enviar logs a <strong>{{ siem_hint }}</strong>, Wazuh o Elastic SIEM para correlación avanzada.</p>
+      <p>Este honeypot clasifica tráfico con reglas + red neuronal (MLP). Para producción puedes enviar logs a <strong>{{ siem_hint }}</strong>, Wazuh o Elastic SIEM para correlación avanzada.</p>
       <table id="intel">
         <thead><tr><th>IP</th><th>Eventos</th><th>Ataques</th><th>Confianza máx.</th></tr></thead>
         <tbody></tbody>
@@ -114,18 +120,40 @@ async function loadDistribution(){
         backgroundColor: ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899']
       }]
     },
-    options: {
-      plugins: { legend: { position: 'bottom' } }
-    }
+    options: { plugins: { legend: { position: 'bottom' } } }
   });
+}
+
+function setTrainStatus(data) {
+  document.getElementById('train-status').innerText = JSON.stringify(data, null, 2);
+  if (data.ok) {
+    document.getElementById('model-state').innerText = 'cargado';
+  }
 }
 
 async function reloadModel(){
   const res = await fetch('/dashboard/reload-training', { method: 'POST' });
   const data = await res.json();
-  document.getElementById('model-state').innerText = data.model_loaded ? 'cargado' : 'no cargado';
+  setTrainStatus(data);
 }
 
+async function uploadDataset(event) {
+  event.preventDefault();
+  const input = document.getElementById('dataset');
+  if (!input.files.length) return;
+
+  const formData = new FormData();
+  formData.append('dataset', input.files[0]);
+
+  const res = await fetch('/dashboard/upload-ossec', {
+    method: 'POST',
+    body: formData,
+  });
+  const data = await res.json();
+  setTrainStatus(data);
+}
+
+document.getElementById('upload-form').addEventListener('submit', uploadDataset);
 document.getElementById('reload-model').addEventListener('click', reloadModel);
 document.getElementById('only-attacks').addEventListener('change', loadLogs);
 
