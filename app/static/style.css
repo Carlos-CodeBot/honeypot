@@ -1,0 +1,36 @@
+:root{--theme-color:#1f3aed;--bg:#f3f6ff;--text:#0f172a}
+*{box-sizing:border-box}
+body{font-family:Inter,Arial,sans-serif;background:var(--bg);color:var(--text);margin:0;line-height:1.5}
+.container{max-width:1100px;margin:0 auto;padding:0 1rem}
+.topbar{background:#0b1220;color:#fff;position:sticky;top:0;z-index:10;border-bottom:1px solid #1e293b}
+.nav{display:flex;justify-content:space-between;align-items:center;padding:1rem 0}
+.brand{font-weight:700;letter-spacing:.2px}
+nav a{color:#e2e8f0;text-decoration:none;margin-left:1rem}
+.hero{display:grid;grid-template-columns:1.3fr 1fr;gap:1.2rem;padding:2rem 1rem}
+.badge{display:inline-block;background:#dbeafe;color:#1e40af;padding:.2rem .6rem;border-radius:999px;font-size:.8rem}
+h1{font-size:2rem;margin:.4rem 0}
+.panel{background:#0f172a;color:#e2e8f0;padding:1rem;border-radius:14px}
+.actions{display:flex;gap:.7rem;margin-top:1rem}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem;padding-bottom:1rem}
+.card{background:#fff;border-radius:12px;padding:1rem;box-shadow:0 8px 28px rgba(15,23,42,.08)}
+.testimonials{padding:1rem 1rem 2rem}
+.footer{display:flex;justify-content:space-between;padding:1rem 1rem 2rem;color:#475569}
+.btn,button{background:var(--theme-color);color:#fff;border:none;padding:.65rem 1rem;border-radius:8px;text-decoration:none;display:inline-block;cursor:pointer}
+.btn.small{padding:.35rem .75rem}
+.btn.ghost{background:#fff;color:#1f3aed;border:1px solid #c7d2fe}
+input{display:block;width:100%;padding:.55rem;margin:.3rem 0 .9rem;border:1px solid #cbd5e1;border-radius:8px}
+.searchbox{margin-top:1rem;display:flex;gap:.5rem}
+.searchbox input{margin:0}
+main.container{padding:1.3rem 1rem}
+.narrow{max-width:480px;margin:0 auto}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;margin-bottom:1rem}
+table{width:100%;border-collapse:collapse}
+th,td{padding:.45rem;border-bottom:1px solid #e2e8f0;text-align:left;font-size:.9rem;vertical-align:top}
+.tab-nav{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem}
+.tab-link{background:#e2e8f0;color:#0f172a}
+.tab-link.active{background:var(--theme-color);color:#fff}
+.tab-content{display:none}
+.tab-content.active{display:block}
+.pie-wrapper{width:360px;height:360px;max-width:100%;margin:1rem auto 0}
+.pie-wrapper canvas{width:100% !important;height:100% !important}
+@media (max-width:900px){.hero{grid-template-columns:1fr}.footer{flex-direction:column;gap:.6rem}}
