@@ -10,7 +10,13 @@
   <header class="topbar">
     <div class="container nav">
       <div class="brand">Dashboard SOC</div>
-      <nav><a href="/">Sitio público</a></nav>
+      <nav>
+        <a href="/">Sitio público</a>
+        <span style="margin-left:1rem;">Usuario: {{ current_user['username'] }}</span>
+        <form method="post" action="/dashboard/logout" style="display:inline;">
+          <button type="submit" class="btn small">Cerrar sesión</button>
+        </form>
+      </nav>
     </div>
   </header>
 
@@ -21,6 +27,7 @@
       <button class="tab-link" data-tab="tab-candidates">Candidatos IA</button>
       <button class="tab-link" data-tab="tab-events">Eventos</button>
       <button class="tab-link" data-tab="tab-intel">Intel IP</button>
+      <button class="tab-link" data-tab="tab-users">Usuarios</button>
     </nav>
 
     <section id="tab-overview" class="tab-content active">
@@ -35,7 +42,7 @@
         <h3>Clasificación de ataques (Top)</h3>
         <ul>
           {% for item in top_types %}
-            <li><strong>{{ item.attack_type }}</strong>: {{ item.total }}</li>
+            <li><strong>{{ item.attack_label }}</strong>: {{ item.total }}</li>
           {% else %}
             <li>Sin eventos clasificados todavía.</li>
           {% endfor %}
@@ -44,6 +51,16 @@
         <input id="chart-size" type="range" min="220" max="520" value="360">
         <div id="pie-wrapper" class="pie-wrapper">
           <canvas id="attackPie"></canvas>
+        </div>
+        <div class="grid">
+          <div class="card">
+            <h4>Top IPs por tráfico</h4>
+            <canvas id="topIpsChart" height="140"></canvas>
+          </div>
+          <div class="card">
+            <h4>Nivel de confianza IA</h4>
+            <canvas id="modelHealthChart" height="140"></canvas>
+          </div>
         </div>
       </section>
     </section>
@@ -80,6 +97,7 @@
         <h3>Candidatos de entrenamiento desde tráfico real</h3>
         <p>Pendientes: <strong id="pending-count">{{ pending_candidates }}</strong></p>
         <button type="button" id="train-candidates">Entrenar con aprobados</button>
+        <button type="button" id="approve-all-candidates">Aprobar todos pendientes</button>
         <table id="candidates">
           <thead>
             <tr><th>ID</th><th>Fecha</th><th>Sugerido</th><th>Estado</th><th>Payload</th><th>Acción</th></tr>
@@ -114,11 +132,32 @@
         </table>
       </section>
     </section>
+
+    <section id="tab-users" class="tab-content">
+      <section class="card">
+        <h3>Administración de usuarios</h3>
+        <form id="create-user-form">
+          <input type="text" id="new-username" placeholder="Nuevo usuario" required>
+          <input type="password" id="new-password" placeholder="Contraseña (mínimo 8)" required>
+          <select id="new-role">
+            <option value="analyst">Analyst</option>
+            <option value="admin">Admin</option>
+          </select>
+          <button type="submit">Crear usuario</button>
+        </form>
+        <table id="users-table">
+          <thead><tr><th>ID</th><th>Usuario</th><th>Rol</th><th>Activo</th><th>Cambiar contraseña</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </section>
   </main>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
 let pieChart = null;
+let topIpsChart = null;
+let modelHealthChart = null;
 const tabLinks = document.querySelectorAll('.tab-link');
 const tabContents = document.querySelectorAll('.tab-content');
 
@@ -161,7 +200,7 @@ async function loadDistribution(){
   const res = await fetch('/dashboard/api/distribution');
   const rows = await res.json();
 
-  const labels = rows.map(r => r.attack_type);
+  const labels = rows.map(r => r.attack_label || r.attack_type);
   const values = rows.map(r => r.total);
 
   const canvas = document.getElementById('attackPie');
@@ -175,6 +214,39 @@ async function loadDistribution(){
       datasets: [{
         data: values,
         backgroundColor: ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899']
+      }]
+    },
+    options: { plugins: { legend: { position: 'bottom' } } }
+  });
+}
+
+async function loadTopIps() {
+  const res = await fetch('/dashboard/api/top-ips');
+  const rows = await res.json();
+  const ctx = document.getElementById('topIpsChart').getContext('2d');
+  if (topIpsChart) topIpsChart.destroy();
+  topIpsChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: rows.map(r => r.ip),
+      datasets: [{ data: rows.map(r => r.total), backgroundColor: '#00ff00' }]
+    },
+    options: { plugins: { legend: { display: false } } }
+  });
+}
+
+async function loadModelHealth() {
+  const res = await fetch('/dashboard/api/model-health');
+  const rows = await res.json();
+  const ctx = document.getElementById('modelHealthChart').getContext('2d');
+  if (modelHealthChart) modelHealthChart.destroy();
+  modelHealthChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: ['Muy alta', 'Alta', 'Media', 'Baja'],
+      datasets: [{
+        data: [rows.very_high || 0, rows.high || 0, rows.medium || 0, rows.low || 0],
+        backgroundColor: ['#00ff00', '#6fff6f', '#c4ff80', '#ffffff']
       }]
     },
     options: { plugins: { legend: { position: 'bottom' } } }
@@ -214,6 +286,65 @@ async function trainCandidates() {
   const data = await res.json();
   setTrainStatus(data);
   loadCandidates();
+}
+
+async function approveAllCandidates() {
+  const rows = await (await fetch('/dashboard/api/candidates')).json();
+  const pending = rows.filter(r => r.status === 'pending');
+  for (const item of pending) {
+    await fetch('/dashboard/approve-candidate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: item.id, label: item.suggested_label }),
+    });
+  }
+  setTrainStatus({ ok: true, approved: pending.length });
+  loadCandidates();
+}
+
+async function loadUsers() {
+  const res = await fetch('/dashboard/api/users');
+  if (res.status !== 200) return;
+  const rows = await res.json();
+  const tbody = document.querySelector('#users-table tbody');
+  tbody.innerHTML = rows.map(u => `
+    <tr>
+      <td>${u.id}</td>
+      <td>${u.username}</td>
+      <td>${u.role}</td>
+      <td>${u.is_active ? 'sí' : 'no'}</td>
+      <td><button onclick="changePassword(${u.id})">Cambiar</button></td>
+    </tr>
+  `).join('');
+}
+
+async function createUser(event) {
+  event.preventDefault();
+  const payload = {
+    username: document.getElementById('new-username').value,
+    password: document.getElementById('new-password').value,
+    role: document.getElementById('new-role').value,
+  };
+  const res = await fetch('/dashboard/api/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  setTrainStatus(data);
+  loadUsers();
+}
+
+async function changePassword(userId) {
+  const password = prompt('Nueva contraseña (mínimo 8):');
+  if (!password) return;
+  const res = await fetch('/dashboard/api/users/' + userId + '/password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+  const data = await res.json();
+  setTrainStatus(data);
 }
 
 function updateChartSize(value) {
@@ -289,15 +420,20 @@ document.getElementById('theme-upload-form').addEventListener('submit', uploadTh
 document.getElementById('reload-model').addEventListener('click', reloadModel);
 document.getElementById('restore-theme').addEventListener('click', restoreTheme);
 document.getElementById('train-candidates').addEventListener('click', trainCandidates);
+document.getElementById('approve-all-candidates').addEventListener('click', approveAllCandidates);
+document.getElementById('create-user-form').addEventListener('submit', createUser);
 document.getElementById('only-attacks').addEventListener('change', loadLogs);
 document.getElementById('chart-size').addEventListener('input', (e) => updateChartSize(e.target.value));
 
 loadLogs();
 loadIntel();
 loadCandidates();
+loadUsers();
+loadTopIps();
+loadModelHealth();
 updateChartSize(document.getElementById('chart-size').value);
 loadDistribution();
-setInterval(() => { loadLogs(); loadIntel(); loadDistribution(); loadCandidates(); }, 7000);
+setInterval(() => { loadLogs(); loadIntel(); loadDistribution(); loadCandidates(); loadTopIps(); loadModelHealth(); }, 7000);
 </script>
 </body>
 </html>

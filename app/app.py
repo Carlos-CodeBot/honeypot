@@ -15,6 +15,7 @@ from urllib.parse import unquote_plus
 
 import joblib
 from flask import Flask, Response, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
+from werkzeug.security import check_password_hash, generate_password_hash
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
@@ -167,6 +168,24 @@ DEFAULT_BENIGN_SAMPLES = [
     "GET /search?q=precios+planes",
     "GET /api/health",
 ]
+
+ATTACK_LABEL_ES = {
+    "xss": "XSS",
+    "sqli": "Inyección SQL",
+    "path_traversal": "Path Traversal",
+    "command_injection": "Inyección de Comandos",
+    "scanner_bot": "Escáner / Bot",
+    "lfi": "Inclusión Local de Archivos (LFI)",
+    "rfi": "Inclusión Remota de Archivos (RFI)",
+    "ssrf": "SSRF",
+    "xxe": "XXE",
+    "deserialization": "Deserialización Insegura",
+    "auth_bypass": "Bypass de Autenticación",
+    "bruteforce": "Fuerza Bruta",
+    "webshell_activity": "Actividad Webshell",
+    "file_upload_abuse": "Abuso de Carga de Archivos",
+    "benign": "Benigno",
+}
 
 
 class AdaptiveClassifier:
@@ -524,6 +543,18 @@ def init_db():
         )
         """
     )
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dashboard_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT DEFAULT 'analyst',
+            is_active INTEGER DEFAULT 1,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
     db.commit()
 
     existing_columns = {row[1] for row in db.execute("PRAGMA table_info(attack_logs)").fetchall()}
@@ -536,6 +567,23 @@ def init_db():
     for col, col_type in required_columns.items():
         if col not in existing_columns:
             db.execute(f"ALTER TABLE attack_logs ADD COLUMN {col} {col_type}")
+
+    admin_exists = db.execute(
+        "SELECT id FROM dashboard_users WHERE username = ?",
+        (app.config["ADMIN_USER"],),
+    ).fetchone()
+    if not admin_exists:
+        db.execute(
+            """
+            INSERT INTO dashboard_users(username, password_hash, role, is_active, created_at)
+            VALUES (?, ?, 'admin', 1, ?)
+            """,
+            (
+                app.config["ADMIN_USER"],
+                generate_password_hash(app.config["ADMIN_PASS"]),
+                datetime.utcnow().isoformat(),
+            ),
+        )
 
     db.commit()
     db.close()
@@ -651,16 +699,42 @@ def save_training_candidate(payload, suggested_label, event_id=None):
     )
 
 
-def basic_auth_required(f):
+def get_dashboard_user():
+    user_id = session.get("dashboard_user_id")
+    if not user_id:
+        return None
+    db = get_db()
+    return db.execute(
+        """
+        SELECT id, username, role, is_active
+        FROM dashboard_users
+        WHERE id = ?
+        """,
+        (user_id,),
+    ).fetchone()
+
+
+def dashboard_auth_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        auth = request.authorization
-        if not auth or auth.username != app.config["ADMIN_USER"] or auth.password != app.config["ADMIN_PASS"]:
-            return Response(
-                "Acceso no autorizado",
-                401,
-                {"WWW-Authenticate": 'Basic realm="Honeypot Dashboard"'},
-            )
+        user = get_dashboard_user()
+        if not user or user["is_active"] != 1:
+            if request.path.startswith("/dashboard/api") or request.path.startswith("/dashboard/approve") or request.path.startswith("/dashboard/train"):
+                return jsonify({"ok": False, "error": "unauthorized"}), 401
+            return redirect(url_for("dashboard_login"))
+        g.dashboard_user = user
+        return f(*args, **kwargs)
+
+    return decorated
+
+
+def dashboard_admin_required(f):
+    @wraps(f)
+    @dashboard_auth_required
+    def decorated(*args, **kwargs):
+        user = getattr(g, "dashboard_user", None)
+        if not user or user["role"] != "admin":
+            return jsonify({"ok": False, "error": "forbidden"}), 403
         return f(*args, **kwargs)
 
     return decorated
@@ -673,21 +747,8 @@ def request_entity_too_large(error):
 
 @app.before_request
 def global_logger():
-    ignore_paths = {
-        "/dashboard",
-        "/dashboard/api/logs",
-        "/dashboard/api/intel",
-        "/dashboard/api/distribution",
-        "/dashboard/api/candidates",
-        "/dashboard/reload-training",
-        "/dashboard/upload-ossec",
-        "/dashboard/upload-theme",
-        "/dashboard/restore-theme",
-        "/dashboard/approve-candidate",
-        "/dashboard/train-candidates",
-        "/static/style.css",
-    }
-    if request.path not in ignore_paths:
+    ignore_prefixes = ("/dashboard", "/static/", "/custom-assets/")
+    if not request.path.startswith(ignore_prefixes):
         features = {
             "path": decode_payload(request.path),
             "query": decode_payload(request.query_string.decode("utf-8", errors="ignore")),
@@ -800,8 +861,37 @@ def health():
     return jsonify({"status": "ok", "service": "honeypot-web"})
 
 
+@app.route("/dashboard/login", methods=["GET", "POST"])
+def dashboard_login():
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip()
+        password = request.form.get("password") or ""
+        db = get_db()
+        user = db.execute(
+            """
+            SELECT id, username, password_hash, role, is_active
+            FROM dashboard_users
+            WHERE username = ?
+            """,
+            (username,),
+        ).fetchone()
+        if user and user["is_active"] == 1 and check_password_hash(user["password_hash"], password):
+            session["dashboard_user_id"] = user["id"]
+            return redirect(url_for("dashboard"))
+        return render_template("dashboard_login.html", error="Credenciales inválidas")
+
+    return render_template("dashboard_login.html", error=None)
+
+
+@app.route("/dashboard/logout", methods=["POST"])
+@dashboard_auth_required
+def dashboard_logout():
+    session.pop("dashboard_user_id", None)
+    return redirect(url_for("dashboard_login"))
+
+
 @app.route("/dashboard")
-@basic_auth_required
+@dashboard_auth_required
 def dashboard():
     db = get_db()
     stats = db.execute(
@@ -830,10 +920,21 @@ def dashboard():
         "SELECT COUNT(*) AS total FROM training_candidates WHERE status = 'pending'"
     ).fetchone()
 
+    formatted_top = []
+    for item in top_types:
+        attack_key = item["attack_type"]
+        formatted_top.append(
+            {
+                "attack_type": attack_key,
+                "attack_label": ATTACK_LABEL_ES.get(attack_key, attack_key.replace("_", " ").title()),
+                "total": item["total"],
+            }
+        )
+
     return render_template(
         "dashboard.html",
         stats=stats,
-        top_types=[dict(x) for x in top_types],
+        top_types=formatted_top,
         siem_hint=app.config["SIEM_HINT"],
         training_file=TRAINING_FILE,
         model_loaded=adaptive_model.loaded,
@@ -842,11 +943,12 @@ def dashboard():
         custom_front_active=os.path.exists(custom_front_templates_dir()),
         custom_front_backup=backup_front_exists(),
         pending_candidates=pending_candidates["total"] if pending_candidates else 0,
+        current_user=g.dashboard_user,
     )
 
 
 @app.route("/dashboard/reload-training", methods=["POST"])
-@basic_auth_required
+@dashboard_auth_required
 def reload_training():
     if not os.path.exists(TRAINING_FILE):
         return jsonify({"ok": False, "error": "training_file_not_found", "training_file": TRAINING_FILE}), 404
@@ -860,7 +962,7 @@ def reload_training():
 
 
 @app.route("/dashboard/upload-ossec", methods=["POST"])
-@basic_auth_required
+@dashboard_auth_required
 def upload_ossec_file():
     upload = request.files.get("dataset")
     if not upload or not upload.filename:
@@ -908,7 +1010,7 @@ def upload_ossec_file():
 
 
 @app.route("/dashboard/upload-theme", methods=["POST"])
-@basic_auth_required
+@dashboard_auth_required
 def upload_theme_zip():
     upload = request.files.get("theme_zip")
     if not upload or not upload.filename:
@@ -931,7 +1033,7 @@ def upload_theme_zip():
 
 
 @app.route("/dashboard/restore-theme", methods=["POST"])
-@basic_auth_required
+@dashboard_auth_required
 def restore_theme():
     current_dir = os.path.join(CUSTOM_FRONT_DIR, "current")
     backup_dir = os.path.join(CUSTOM_FRONT_DIR, "backup")
@@ -958,7 +1060,7 @@ def restore_theme():
 
 
 @app.route("/dashboard/api/logs")
-@basic_auth_required
+@dashboard_auth_required
 def dashboard_logs():
     db = get_db()
     only_attacks = request.args.get("only_attacks") == "1"
@@ -988,7 +1090,7 @@ def dashboard_logs():
 
 
 @app.route("/dashboard/api/intel")
-@basic_auth_required
+@dashboard_auth_required
 def dashboard_intel():
     db = get_db()
     rows = db.execute(
@@ -1009,7 +1111,7 @@ def dashboard_intel():
 
 
 @app.route("/dashboard/api/distribution")
-@basic_auth_required
+@dashboard_auth_required
 def dashboard_distribution():
     db = get_db()
     rows = db.execute(
@@ -1021,11 +1123,16 @@ def dashboard_distribution():
         ORDER BY total DESC
         """
     ).fetchall()
-    return jsonify([dict(row) for row in rows])
+    payload = []
+    for row in rows:
+        data = dict(row)
+        data["attack_label"] = ATTACK_LABEL_ES.get(data["attack_type"], data["attack_type"].replace("_", " ").title())
+        payload.append(data)
+    return jsonify(payload)
 
 
 @app.route("/dashboard/api/candidates")
-@basic_auth_required
+@dashboard_auth_required
 def dashboard_candidates():
     db = get_db()
     rows = db.execute(
@@ -1039,8 +1146,42 @@ def dashboard_candidates():
     return jsonify([dict(row) for row in rows])
 
 
+@app.route("/dashboard/api/top-ips")
+@dashboard_auth_required
+def dashboard_top_ips():
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT COALESCE(ip, 'unknown') AS ip, COUNT(*) AS total
+        FROM attack_logs
+        GROUP BY ip
+        ORDER BY total DESC
+        LIMIT 10
+        """
+    ).fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.route("/dashboard/api/model-health")
+@dashboard_auth_required
+def dashboard_model_health():
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT
+            SUM(CASE WHEN confidence >= 0.90 THEN 1 ELSE 0 END) AS very_high,
+            SUM(CASE WHEN confidence >= 0.75 AND confidence < 0.90 THEN 1 ELSE 0 END) AS high,
+            SUM(CASE WHEN confidence >= 0.60 AND confidence < 0.75 THEN 1 ELSE 0 END) AS medium,
+            SUM(CASE WHEN confidence < 0.60 THEN 1 ELSE 0 END) AS low
+        FROM attack_logs
+        WHERE is_attack = 1
+        """
+    ).fetchone()
+    return jsonify(dict(rows))
+
+
 @app.route("/dashboard/approve-candidate", methods=["POST"])
-@basic_auth_required
+@dashboard_auth_required
 def approve_candidate():
     data = request.get_json(silent=True) or {}
     candidate_id = data.get("id")
@@ -1069,7 +1210,7 @@ def approve_candidate():
 
 
 @app.route("/dashboard/train-candidates", methods=["POST"])
-@basic_auth_required
+@dashboard_auth_required
 def train_from_candidates():
     db = get_db()
     rows = db.execute(
@@ -1089,6 +1230,61 @@ def train_from_candidates():
         db.execute("UPDATE training_candidates SET status = 'trained' WHERE status = 'approved'")
         db.commit()
     return jsonify(result), status
+
+
+@app.route("/dashboard/api/users")
+@dashboard_admin_required
+def dashboard_users():
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT id, username, role, is_active, created_at
+        FROM dashboard_users
+        ORDER BY id ASC
+        """
+    ).fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.route("/dashboard/api/users", methods=["POST"])
+@dashboard_admin_required
+def create_dashboard_user():
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip().lower()
+    password = data.get("password") or ""
+    role = (data.get("role") or "analyst").strip().lower()
+    if not username or len(password) < 8:
+        return jsonify({"ok": False, "error": "invalid_input"}), 400
+    if role not in {"admin", "analyst"}:
+        role = "analyst"
+
+    db = get_db()
+    exists = db.execute("SELECT id FROM dashboard_users WHERE username = ?", (username,)).fetchone()
+    if exists:
+        return jsonify({"ok": False, "error": "user_exists"}), 400
+
+    db.execute(
+        """
+        INSERT INTO dashboard_users(username, password_hash, role, is_active, created_at)
+        VALUES (?, ?, ?, 1, ?)
+        """,
+        (username, generate_password_hash(password), role, datetime.utcnow().isoformat()),
+    )
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/dashboard/api/users/<int:user_id>/password", methods=["POST"])
+@dashboard_admin_required
+def change_dashboard_user_password(user_id):
+    data = request.get_json(silent=True) or {}
+    new_password = data.get("password") or ""
+    if len(new_password) < 8:
+        return jsonify({"ok": False, "error": "password_too_short"}), 400
+    db = get_db()
+    db.execute("UPDATE dashboard_users SET password_hash = ? WHERE id = ?", (generate_password_hash(new_password), user_id))
+    db.commit()
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":

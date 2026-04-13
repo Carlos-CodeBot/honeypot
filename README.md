@@ -56,12 +56,15 @@ En `.env` puedes ajustar:
 - `/internal` área interna simulada
 - `/search?q=...` vulnerable a XSS reflejado (intencional)
 - `/dashboard` panel SOC
+- `/dashboard/login` acceso al panel
+- `/dashboard/logout` cerrar sesión
 - `/dashboard/upload-ossec` subida segura de dataset para entrenar
 - `/dashboard/upload-theme` subida de ZIP para personalizar frontend (sin tocar detección)
 - `/dashboard/restore-theme` restaura el front anterior desde backup
 - `/dashboard/api/candidates` lista candidatos de entrenamiento desde tráfico real
 - `/dashboard/approve-candidate` aprueba/etiqueta candidato
 - `/dashboard/train-candidates` entrena modelo con candidatos aprobados
+- `/dashboard/api/users` gestión de usuarios del panel (admin)
 - `/dashboard/reload-training` recarga entrenamiento desde `TRAINING_FILE`
 - `/dashboard/api/logs?only_attacks=1` logs clasificados
 - `/dashboard/api/intel` ranking por IP

@@ -72,12 +72,14 @@ th,td{padding:.45rem;border-bottom:1px solid #e2e8f0;text-align:left;font-size:.
 
 /* Dashboard cyberpunk / 80s hacker style */
 .dashboard-theme{background:#030605;color:#8cff9a}
-.dashboard-theme .topbar{background:#020202;border-bottom:1px solid #1aff66}
-.dashboard-theme .card{background:#07100b;border:1px solid #1a4d2f;box-shadow:0 0 12px rgba(26,255,102,.15);color:#b8ffbf}
-.dashboard-theme .tab-link{background:#0b1f13;color:#9dffac;border:1px solid #1a4d2f}
-.dashboard-theme .tab-link.active{background:#0f3d20;color:#d2ffd8;border-color:#2aff78}
-.dashboard-theme table th,.dashboard-theme table td{border-bottom:1px solid #134026;color:#9cffac}
-.dashboard-theme code{color:#7bff9f}
-.dashboard-theme input,.dashboard-theme pre{background:#040a06;color:#9effaa;border:1px solid #1c5a36}
+.dashboard-theme{font-family:"Courier New","Lucida Console",monospace;color:#ffffff}
+.dashboard-theme .topbar{background:#020202;border-bottom:1px solid #00ff00}
+.dashboard-theme .topbar a,.dashboard-theme .topbar span{color:#ffffff}
+.dashboard-theme .card{background:#061106;border:1px solid #00ff00;box-shadow:0 0 12px rgba(0,255,0,.22);color:#ffffff}
+.dashboard-theme .tab-link{background:#092009;color:#ffffff;border:1px solid #00ff00}
+.dashboard-theme .tab-link.active{background:#003900;color:#ffffff;border-color:#00ff00}
+.dashboard-theme table th,.dashboard-theme table td{border-bottom:1px solid #0a6d0a;color:#ffffff}
+.dashboard-theme code{color:#00ff00}
+.dashboard-theme input,.dashboard-theme pre,.dashboard-theme select{background:#040a06;color:#ffffff;border:1px solid #00ff00}
 .dashboard-theme pre{padding:.7rem;border-radius:8px;overflow:auto}
-.dashboard-theme button,.dashboard-theme .btn{background:#0f5b2e;color:#d8ffe0}
+.dashboard-theme button,.dashboard-theme .btn{background:#005f00;color:#ffffff;border:1px solid #00ff00}
