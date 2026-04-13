@@ -59,6 +59,15 @@
           <button type="submit">Subir y entrenar</button>
           <button type="button" id="reload-model">Recargar desde disco</button>
         </form>
+        <p><small>“Recargar desde disco” relee <code>{{ training_file }}</code> y vuelve a entrenar el modelo sin reiniciar el contenedor.</small></p>
+        <hr>
+        <h4>Personalización de front (ZIP)</h4>
+        <p>Estado front personalizado: <strong id="custom-front-state">{{ 'activo' if custom_front_active else 'inactivo' }}</strong></p>
+        <p>Sube un ZIP con tus páginas (<code>index.html</code>, <code>contact.html</code>, etc.) y assets. Los assets se sirven desde <code>/custom-assets/...</code>.</p>
+        <form id="theme-upload-form" enctype="multipart/form-data">
+          <input id="theme_zip" type="file" name="theme_zip" accept=".zip" required>
+          <button type="submit">Subir ZIP de front</button>
+        </form>
         <pre id="train-status"></pre>
       </section>
     </section>
@@ -193,7 +202,23 @@ async function uploadDataset(event) {
   setTrainStatus(data);
 }
 
+async function uploadTheme(event) {
+  event.preventDefault();
+  const input = document.getElementById('theme_zip');
+  if (!input.files.length) return;
+
+  const formData = new FormData();
+  formData.append('theme_zip', input.files[0]);
+  const res = await fetch('/dashboard/upload-theme', { method: 'POST', body: formData });
+  const data = await res.json();
+  setTrainStatus(data);
+  if (typeof data.custom_front_active !== 'undefined') {
+    document.getElementById('custom-front-state').innerText = data.custom_front_active ? 'activo' : 'inactivo';
+  }
+}
+
 document.getElementById('upload-form').addEventListener('submit', uploadDataset);
+document.getElementById('theme-upload-form').addEventListener('submit', uploadTheme);
 document.getElementById('reload-model').addEventListener('click', reloadModel);
 document.getElementById('only-attacks').addEventListener('change', loadLogs);
 document.getElementById('chart-size').addEventListener('input', (e) => updateChartSize(e.target.value));

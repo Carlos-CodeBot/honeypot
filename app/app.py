@@ -1,17 +1,20 @@
 import csv
 import io
 import os
+import posixpath
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
 import tempfile
+import zipfile
 from datetime import datetime
 from functools import wraps
 from urllib.parse import unquote_plus
 
 import joblib
-from flask import Flask, Response, g, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, Response, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
@@ -22,6 +25,7 @@ DB_PATH = os.getenv("DB_PATH", "/data/honeypot.db")
 TRAINING_FILE = os.getenv("TRAINING_FILE", "/data/training_samples.txt")
 MODEL_PATH = os.getenv("MODEL_PATH", "/data/adaptive_model.joblib")
 FILTER_SCRIPT = os.getenv("FILTER_SCRIPT", os.path.join(BASE_DIR, "filtro", "ossec_filter.py"))
+CUSTOM_FRONT_DIR = os.getenv("CUSTOM_FRONT_DIR", "/data/custom_front")
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "change-me-in-production")
@@ -75,6 +79,7 @@ ATTACK_RULES = [
 SEVERITY_WEIGHT = {"low": 1, "medium": 2, "high": 3}
 ALLOWED_UPLOAD_EXTENSIONS = {".txt", ".csv"}
 VALID_LABELS = {"xss", "sqli", "path_traversal", "command_injection", "scanner_bot", "benign"}
+ALLOWED_THEME_EXTENSIONS = {".html", ".css", ".js", ".png", ".jpg", ".jpeg", ".svg", ".webp", ".gif", ".ico"}
 DEFAULT_BENIGN_SAMPLES = [
     "GET /",
     "GET /contacto",
@@ -304,6 +309,73 @@ def process_ossec_txt_with_filter(upload_text):
             return output_file.read(), None
 
 
+def custom_front_templates_dir():
+    return os.path.join(CUSTOM_FRONT_DIR, "current", "templates")
+
+
+def custom_front_assets_dir():
+    return os.path.join(CUSTOM_FRONT_DIR, "current", "assets")
+
+
+def load_custom_page(template_name):
+    custom_path = os.path.join(custom_front_templates_dir(), template_name)
+    if os.path.exists(custom_path):
+        with open(custom_path, "r", encoding="utf-8", errors="ignore") as f:
+            return f.read()
+    return None
+
+
+def store_theme_zip(uploaded_bytes):
+    temp_extract = tempfile.mkdtemp(prefix="theme_extract_")
+    templates_dir = os.path.join(temp_extract, "templates")
+    assets_dir = os.path.join(temp_extract, "assets")
+    os.makedirs(templates_dir, exist_ok=True)
+    os.makedirs(assets_dir, exist_ok=True)
+
+    with zipfile.ZipFile(io.BytesIO(uploaded_bytes)) as zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+
+            raw_name = info.filename.replace("\\", "/")
+            normalized = posixpath.normpath(raw_name).lstrip("/")
+            if normalized.startswith("..") or "/.." in normalized:
+                shutil.rmtree(temp_extract, ignore_errors=True)
+                return {"ok": False, "error": "zip_path_not_allowed", "detail": raw_name}
+
+            ext = os.path.splitext(normalized.lower())[1]
+            if ext not in ALLOWED_THEME_EXTENSIONS:
+                shutil.rmtree(temp_extract, ignore_errors=True)
+                return {"ok": False, "error": "zip_extension_not_allowed", "detail": normalized}
+
+            target_root = None
+            basename = os.path.basename(normalized)
+            if normalized.startswith("templates/") or ext == ".html":
+                target_root = templates_dir
+            elif normalized.startswith("assets/"):
+                target_root = assets_dir
+            else:
+                target_root = assets_dir
+
+            if not basename:
+                continue
+            target_path = os.path.join(target_root, basename)
+            with zf.open(info) as source, open(target_path, "wb") as target:
+                target.write(source.read())
+
+    current_dir = os.path.join(CUSTOM_FRONT_DIR, "current")
+    backup_dir = os.path.join(CUSTOM_FRONT_DIR, "backup")
+    os.makedirs(CUSTOM_FRONT_DIR, exist_ok=True)
+
+    if os.path.exists(backup_dir):
+        shutil.rmtree(backup_dir, ignore_errors=True)
+    if os.path.exists(current_dir):
+        shutil.move(current_dir, backup_dir)
+
+    shutil.move(temp_extract, current_dir)
+    return {"ok": True, "templates_dir": custom_front_templates_dir(), "assets_dir": custom_front_assets_dir()}
+
+
 def get_db():
     if "db" not in g:
         g.db = sqlite3.connect(DB_PATH)
@@ -320,6 +392,7 @@ def close_db(exception):
 
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    os.makedirs(CUSTOM_FRONT_DIR, exist_ok=True)
     db = sqlite3.connect(DB_PATH)
     db.execute(
         """
@@ -461,6 +534,7 @@ def global_logger():
         "/dashboard/api/distribution",
         "/dashboard/reload-training",
         "/dashboard/upload-ossec",
+        "/dashboard/upload-theme",
         "/static/style.css",
     }
     if request.path not in ignore_paths:
@@ -476,23 +550,36 @@ def global_logger():
 
 @app.route("/")
 def home():
+    custom = load_custom_page("index.html")
+    if custom:
+        return Response(custom, mimetype="text/html")
     return render_template("index.html")
 
 
 @app.route("/producto/<slug>")
 def product(slug):
+    custom = load_custom_page("product.html")
+    if custom:
+        return Response(custom, mimetype="text/html")
     return render_template("product.html", slug=slug)
 
 
 @app.route("/contacto", methods=["GET", "POST"])
 def contact():
     if request.method == "POST":
+        custom = load_custom_page("contact.html")
+        if custom:
+            return Response(custom, mimetype="text/html")
         return render_template("contact.html", success=True)
+    custom = load_custom_page("contact.html")
+    if custom:
+        return Response(custom, mimetype="text/html")
     return render_template("contact.html", success=False)
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    custom = load_custom_page("login.html")
     if request.method == "POST":
         username = request.form.get("username", "")
         password = request.form.get("password", "")
@@ -502,6 +589,8 @@ def login():
         if username == "demo" and password == "demo":
             session["user"] = username
             return redirect(url_for("internal"))
+    if custom:
+        return Response(custom, mimetype="text/html")
     return render_template("login.html")
 
 
@@ -509,7 +598,18 @@ def login():
 def internal():
     if not session.get("user"):
         return redirect(url_for("login"))
+    custom = load_custom_page("internal.html")
+    if custom:
+        return Response(custom, mimetype="text/html")
     return render_template("internal.html", user=session["user"])
+
+
+@app.route("/custom-assets/<path:filename>")
+def custom_assets(filename):
+    assets_root = custom_front_assets_dir()
+    if not os.path.exists(assets_root):
+        return jsonify({"ok": False, "error": "custom_assets_not_found"}), 404
+    return send_from_directory(assets_root, filename)
 
 
 @app.route("/search")
@@ -559,6 +659,7 @@ def dashboard():
         model_loaded=adaptive_model.loaded,
         model_samples=adaptive_model.samples_seen,
         max_upload_size=app.config["MAX_CONTENT_LENGTH"],
+        custom_front_active=os.path.exists(custom_front_templates_dir()),
     )
 
 
@@ -622,6 +723,28 @@ def upload_ossec_file():
             "model_path": MODEL_PATH,
         }
     )
+
+
+@app.route("/dashboard/upload-theme", methods=["POST"])
+@basic_auth_required
+def upload_theme_zip():
+    upload = request.files.get("theme_zip")
+    if not upload or not upload.filename:
+        return jsonify({"ok": False, "error": "missing_file"}), 400
+
+    safe_name = secure_filename(upload.filename)
+    if not safe_name.lower().endswith(".zip"):
+        return jsonify({"ok": False, "error": "invalid_extension", "allowed": [".zip"]}), 400
+
+    uploaded_bytes = upload.stream.read()
+    if len(uploaded_bytes) > app.config["MAX_CONTENT_LENGTH"]:
+        return jsonify({"ok": False, "error": "file_too_large", "max_bytes": app.config["MAX_CONTENT_LENGTH"]}), 413
+
+    result = store_theme_zip(uploaded_bytes)
+    status = 200 if result.get("ok") else 400
+    result["filename"] = safe_name
+    result["custom_front_active"] = os.path.exists(custom_front_templates_dir())
+    return jsonify(result), status
 
 
 @app.route("/dashboard/api/logs")

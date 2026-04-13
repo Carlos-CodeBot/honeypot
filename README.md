@@ -57,6 +57,7 @@ En `.env` puedes ajustar:
 - `/search?q=...` vulnerable a XSS reflejado (intencional)
 - `/dashboard` panel SOC
 - `/dashboard/upload-ossec` subida segura de dataset para entrenar
+- `/dashboard/upload-theme` subida de ZIP para personalizar frontend (sin tocar detección)
 - `/dashboard/reload-training` recarga entrenamiento desde `TRAINING_FILE`
 - `/dashboard/api/logs?only_attacks=1` logs clasificados
 - `/dashboard/api/intel` ranking por IP
@@ -94,6 +95,15 @@ La vista de carga del dashboard aplica:
 - Validación de extensión (`.txt`, `.csv`).
 - Normalización de nombre con `secure_filename`.
 - Parseo controlado (sin ejecución de código del archivo).
+
+## Personalización del frontend por ZIP
+
+Puedes subir un ZIP desde el dashboard para personalizar páginas públicas (`index.html`, `product.html`, `contact.html`, `login.html`, `internal.html`) sin afectar el pipeline de detección del honeypot.
+
+- HTML personalizado se guarda en `CUSTOM_FRONT_DIR/current/templates`.
+- Assets (`.css`, `.js`, imágenes) se guardan en `CUSTOM_FRONT_DIR/current/assets`.
+- Los assets se exponen bajo `/custom-assets/<archivo>`.
+- El backend valida que el ZIP no tenga rutas peligrosas (`../`) ni extensiones no permitidas.
 
 ## Troubleshooting
 
