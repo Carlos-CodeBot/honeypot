@@ -349,17 +349,21 @@ def store_theme_zip(uploaded_bytes):
                 return {"ok": False, "error": "zip_extension_not_allowed", "detail": normalized}
 
             target_root = None
-            basename = os.path.basename(normalized)
+            relative_path = None
             if normalized.startswith("templates/") or ext == ".html":
                 target_root = templates_dir
+                relative_path = normalized.replace("templates/", "", 1) if normalized.startswith("templates/") else os.path.basename(normalized)
             elif normalized.startswith("assets/"):
                 target_root = assets_dir
+                relative_path = normalized.replace("assets/", "", 1)
             else:
                 target_root = assets_dir
+                relative_path = normalized
 
-            if not basename:
+            if not relative_path:
                 continue
-            target_path = os.path.join(target_root, basename)
+            target_path = os.path.join(target_root, relative_path)
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
             with zf.open(info) as source, open(target_path, "wb") as target:
                 target.write(source.read())
 
@@ -374,6 +378,10 @@ def store_theme_zip(uploaded_bytes):
 
     shutil.move(temp_extract, current_dir)
     return {"ok": True, "templates_dir": custom_front_templates_dir(), "assets_dir": custom_front_assets_dir()}
+
+
+def backup_front_exists():
+    return os.path.exists(os.path.join(CUSTOM_FRONT_DIR, "backup", "templates"))
 
 
 def get_db():
@@ -535,6 +543,7 @@ def global_logger():
         "/dashboard/reload-training",
         "/dashboard/upload-ossec",
         "/dashboard/upload-theme",
+        "/dashboard/restore-theme",
         "/static/style.css",
     }
     if request.path not in ignore_paths:
@@ -612,6 +621,32 @@ def custom_assets(filename):
     return send_from_directory(assets_root, filename)
 
 
+@app.route("/<path:filename>")
+def custom_assets_passthrough(filename):
+    reserved = {"dashboard", "api", "producto", "contacto", "login", "internal", "search", "static", "custom-assets"}
+    first = filename.split("/", 1)[0]
+    if first in reserved:
+        return jsonify({"ok": False, "error": "not_found"}), 404
+
+    ext = os.path.splitext(filename.lower())[1]
+    if ext not in ALLOWED_THEME_EXTENSIONS:
+        return jsonify({"ok": False, "error": "not_found"}), 404
+
+    assets_root = custom_front_assets_dir()
+    if not os.path.exists(assets_root):
+        return jsonify({"ok": False, "error": "not_found"}), 404
+
+    candidate = os.path.join(assets_root, filename)
+    if os.path.exists(candidate):
+        return send_from_directory(assets_root, filename)
+
+    basename_candidate = os.path.join(assets_root, os.path.basename(filename))
+    if os.path.exists(basename_candidate):
+        return send_from_directory(assets_root, os.path.basename(filename))
+
+    return jsonify({"ok": False, "error": "not_found"}), 404
+
+
 @app.route("/search")
 def search():
     q = request.args.get("q", "")
@@ -660,6 +695,7 @@ def dashboard():
         model_samples=adaptive_model.samples_seen,
         max_upload_size=app.config["MAX_CONTENT_LENGTH"],
         custom_front_active=os.path.exists(custom_front_templates_dir()),
+        custom_front_backup=backup_front_exists(),
     )
 
 
@@ -744,7 +780,35 @@ def upload_theme_zip():
     status = 200 if result.get("ok") else 400
     result["filename"] = safe_name
     result["custom_front_active"] = os.path.exists(custom_front_templates_dir())
+    result["custom_front_backup"] = backup_front_exists()
     return jsonify(result), status
+
+
+@app.route("/dashboard/restore-theme", methods=["POST"])
+@basic_auth_required
+def restore_theme():
+    current_dir = os.path.join(CUSTOM_FRONT_DIR, "current")
+    backup_dir = os.path.join(CUSTOM_FRONT_DIR, "backup")
+    temp_dir = os.path.join(CUSTOM_FRONT_DIR, "restore_tmp")
+
+    if not os.path.exists(backup_dir):
+        return jsonify({"ok": False, "error": "backup_not_found"}), 404
+
+    if os.path.exists(temp_dir):
+        shutil.rmtree(temp_dir, ignore_errors=True)
+    if os.path.exists(current_dir):
+        shutil.move(current_dir, temp_dir)
+    shutil.move(backup_dir, current_dir)
+    if os.path.exists(temp_dir):
+        shutil.move(temp_dir, backup_dir)
+
+    return jsonify(
+        {
+            "ok": True,
+            "custom_front_active": os.path.exists(custom_front_templates_dir()),
+            "custom_front_backup": backup_front_exists(),
+        }
+    )
 
 
 @app.route("/dashboard/api/logs")

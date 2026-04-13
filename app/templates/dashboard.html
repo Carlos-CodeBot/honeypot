@@ -63,10 +63,12 @@
         <hr>
         <h4>Personalización de front (ZIP)</h4>
         <p>Estado front personalizado: <strong id="custom-front-state">{{ 'activo' if custom_front_active else 'inactivo' }}</strong></p>
+        <p>Backup disponible: <strong id="custom-front-backup">{{ 'sí' if custom_front_backup else 'no' }}</strong></p>
         <p>Sube un ZIP con tus páginas (<code>index.html</code>, <code>contact.html</code>, etc.) y assets. Los assets se sirven desde <code>/custom-assets/...</code>.</p>
         <form id="theme-upload-form" enctype="multipart/form-data">
           <input id="theme_zip" type="file" name="theme_zip" accept=".zip" required>
           <button type="submit">Subir ZIP de front</button>
+          <button type="button" id="restore-theme">Restaurar backup</button>
         </form>
         <pre id="train-status"></pre>
       </section>
@@ -215,11 +217,27 @@ async function uploadTheme(event) {
   if (typeof data.custom_front_active !== 'undefined') {
     document.getElementById('custom-front-state').innerText = data.custom_front_active ? 'activo' : 'inactivo';
   }
+  if (typeof data.custom_front_backup !== 'undefined') {
+    document.getElementById('custom-front-backup').innerText = data.custom_front_backup ? 'sí' : 'no';
+  }
+}
+
+async function restoreTheme() {
+  const res = await fetch('/dashboard/restore-theme', { method: 'POST' });
+  const data = await res.json();
+  setTrainStatus(data);
+  if (typeof data.custom_front_active !== 'undefined') {
+    document.getElementById('custom-front-state').innerText = data.custom_front_active ? 'activo' : 'inactivo';
+  }
+  if (typeof data.custom_front_backup !== 'undefined') {
+    document.getElementById('custom-front-backup').innerText = data.custom_front_backup ? 'sí' : 'no';
+  }
 }
 
 document.getElementById('upload-form').addEventListener('submit', uploadDataset);
 document.getElementById('theme-upload-form').addEventListener('submit', uploadTheme);
 document.getElementById('reload-model').addEventListener('click', reloadModel);
+document.getElementById('restore-theme').addEventListener('click', restoreTheme);
 document.getElementById('only-attacks').addEventListener('change', loadLogs);
 document.getElementById('chart-size').addEventListener('input', (e) => updateChartSize(e.target.value));
 

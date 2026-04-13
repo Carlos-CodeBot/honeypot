@@ -58,6 +58,7 @@ En `.env` puedes ajustar:
 - `/dashboard` panel SOC
 - `/dashboard/upload-ossec` subida segura de dataset para entrenar
 - `/dashboard/upload-theme` subida de ZIP para personalizar frontend (sin tocar detección)
+- `/dashboard/restore-theme` restaura el front anterior desde backup
 - `/dashboard/reload-training` recarga entrenamiento desde `TRAINING_FILE`
 - `/dashboard/api/logs?only_attacks=1` logs clasificados
 - `/dashboard/api/intel` ranking por IP
@@ -103,6 +104,7 @@ Puedes subir un ZIP desde el dashboard para personalizar páginas públicas (`in
 - HTML personalizado se guarda en `CUSTOM_FRONT_DIR/current/templates`.
 - Assets (`.css`, `.js`, imágenes) se guardan en `CUSTOM_FRONT_DIR/current/assets`.
 - Los assets se exponen bajo `/custom-assets/<archivo>`.
+- Si el HTML personalizado referencia `/styles.css` o `/script.js`, el backend intenta resolver esos archivos desde el paquete de assets cargado.
 - El backend valida que el ZIP no tenga rutas peligrosas (`../`) ni extensiones no permitidas.
 
 ## Troubleshooting
