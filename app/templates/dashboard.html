@@ -70,7 +70,7 @@
         <h3>Entrenamiento con archivo OSSEC/filtro</h3>
         <p>Archivo actual: <code>{{ training_file }}</code></p>
         <p>Estado: <strong id="model-state">{{ 'cargado' if model_loaded else 'no cargado' }}</strong> ({{ model_samples }} muestras)</p>
-        <p>Sube un <code>.csv</code> (columnas sugeridas: <code>label,payload</code> o <code>Metodo,Cuerpo_Peticion,Codigo_Respuesta</code>) o un <code>.txt</code> de OSSEC (se procesa con el filtro de <code>/app/filtro/ossec_filter.py</code>). Máx: {{ max_upload_size }} bytes.</p>
+        <p>Sube un <code>.csv</code> (columnas sugeridas: <code>label,payload</code> o <code>Metodo,Cuerpo_Peticion,Codigo_Respuesta</code>) o un <code>.txt</code> output de Heimdall para mejorar el modelo de IA en prediccion de ataques. el tamaño maximo permitido: 10MB bytes.</p>
 
         <form id="upload-form" enctype="multipart/form-data">
           <input id="dataset" type="file" name="dataset" accept=".txt,.csv" required>
