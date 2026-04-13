@@ -17,6 +17,7 @@ import joblib
 from flask import Flask, Response, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics import classification_report
 from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
 from werkzeug.utils import secure_filename
@@ -195,6 +196,7 @@ class AdaptiveClassifier:
         self.labels = []
         self.loaded = False
         self.samples_seen = 0
+        self.metrics = {}
 
     def load_persisted(self):
         if not os.path.exists(self.model_path):
@@ -205,6 +207,7 @@ class AdaptiveClassifier:
         self.pipeline = artifact.get("pipeline")
         self.labels = artifact.get("labels", [])
         self.samples_seen = artifact.get("samples_seen", 0)
+        self.metrics = artifact.get("metrics", {})
         self.loaded = self.pipeline is not None
 
     def train_from_samples(self, samples):
@@ -255,6 +258,17 @@ class AdaptiveClassifier:
             ]
         )
         self.pipeline.fit(texts, labels)
+        preds = self.pipeline.predict(texts)
+        report = classification_report(labels, preds, output_dict=True, zero_division=0)
+        self.metrics = {
+            label: {
+                "precision": round(report.get(label, {}).get("precision", 0.0), 3),
+                "recall": round(report.get(label, {}).get("recall", 0.0), 3),
+                "f1": round(report.get(label, {}).get("f1-score", 0.0), 3),
+                "support": int(report.get(label, {}).get("support", 0)),
+            }
+            for label in unique_labels
+        }
         self.labels = sorted(unique_labels)
         self.samples_seen = len(texts)
         self.loaded = True
@@ -265,10 +279,11 @@ class AdaptiveClassifier:
                 "pipeline": self.pipeline,
                 "labels": self.labels,
                 "samples_seen": self.samples_seen,
+                "metrics": self.metrics,
             },
             self.model_path,
         )
-        return {"ok": True, "samples": self.samples_seen, "labels": self.labels}
+        return {"ok": True, "samples": self.samples_seen, "labels": self.labels, "metrics": self.metrics}
 
     def predict(self, payload):
         if not self.loaded or not payload.strip():
@@ -944,6 +959,7 @@ def dashboard():
         custom_front_backup=backup_front_exists(),
         pending_candidates=pending_candidates["total"] if pending_candidates else 0,
         current_user=g.dashboard_user,
+        current_role="Administrador" if g.dashboard_user["role"] == "admin" else "Analista",
     )
 
 
@@ -1178,6 +1194,24 @@ def dashboard_model_health():
         """
     ).fetchone()
     return jsonify(dict(rows))
+
+
+@app.route("/dashboard/api/model-metrics")
+@dashboard_auth_required
+def dashboard_model_metrics():
+    pretty = []
+    for label, values in adaptive_model.metrics.items():
+        pretty.append(
+            {
+                "label": label,
+                "label_es": ATTACK_LABEL_ES.get(label, label.replace("_", " ").title()),
+                "precision": values.get("precision", 0),
+                "recall": values.get("recall", 0),
+                "f1": values.get("f1", 0),
+                "support": values.get("support", 0),
+            }
+        )
+    return jsonify(sorted(pretty, key=lambda x: x["precision"], reverse=True))
 
 
 @app.route("/dashboard/approve-candidate", methods=["POST"])

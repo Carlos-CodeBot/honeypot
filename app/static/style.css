@@ -71,7 +71,9 @@ th,td{padding:.45rem;border-bottom:1px solid #e2e8f0;text-align:left;font-size:.
 @media (max-width:900px){.hero{grid-template-columns:1fr}.footer{flex-direction:column;gap:.6rem}}
 
 /* Dashboard cyberpunk / 80s hacker style */
-.dashboard-theme{background:#030605;color:#8cff9a}
+.dashboard-theme{background:#000000;color:#8cff9a;position:relative;overflow-x:hidden}
+.dashboard-theme::before{content:"";position:fixed;inset:0;background:repeating-linear-gradient(to bottom,rgba(0,255,0,.04),rgba(0,255,0,.04) 1px,transparent 1px,transparent 3px);pointer-events:none;animation:scan 8s linear infinite;z-index:0}
+.dashboard-theme>*{position:relative;z-index:1}
 .dashboard-theme{font-family:"Courier New","Lucida Console",monospace;color:#ffffff}
 .dashboard-theme .topbar{background:#020202;border-bottom:1px solid #00ff00}
 .dashboard-theme .topbar a,.dashboard-theme .topbar span{color:#ffffff}
@@ -83,3 +85,4 @@ th,td{padding:.45rem;border-bottom:1px solid #e2e8f0;text-align:left;font-size:.
 .dashboard-theme input,.dashboard-theme pre,.dashboard-theme select{background:#040a06;color:#ffffff;border:1px solid #00ff00}
 .dashboard-theme pre{padding:.7rem;border-radius:8px;overflow:auto}
 .dashboard-theme button,.dashboard-theme .btn{background:#005f00;color:#ffffff;border:1px solid #00ff00}
+@keyframes scan{0%{transform:translateY(0)}100%{transform:translateY(6px)}}

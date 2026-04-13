@@ -11,8 +11,7 @@
     <div class="container nav">
       <div class="brand">Dashboard SOC</div>
       <nav>
-        <a href="/">Sitio público</a>
-        <span style="margin-left:1rem;">Usuario: {{ current_user['username'] }}</span>
+        <span style="margin-left:1rem;">{{ current_role }}</span>
         <form method="post" action="/dashboard/logout" style="display:inline;">
           <button type="submit" class="btn small">Cerrar sesión</button>
         </form>
@@ -59,6 +58,7 @@
           </div>
           <div class="card">
             <h4>Nivel de confianza IA</h4>
+            <p><small>Distribuye ataques detectados por nivel de confianza del clasificador (muy alta/alta/media/baja).</small></p>
             <canvas id="modelHealthChart" height="140"></canvas>
           </div>
         </div>
@@ -102,6 +102,11 @@
           <thead>
             <tr><th>ID</th><th>Fecha</th><th>Sugerido</th><th>Estado</th><th>Payload</th><th>Acción</th></tr>
           </thead>
+          <tbody></tbody>
+        </table>
+        <h4>Estado de entrenamiento por tipo de ataque</h4>
+        <table id="model-metrics">
+          <thead><tr><th>Ataque</th><th>Precisión</th><th>Recall</th><th>F1</th><th>Muestras</th></tr></thead>
           <tbody></tbody>
         </table>
       </section>
@@ -229,7 +234,7 @@ async function loadTopIps() {
     type: 'bar',
     data: {
       labels: rows.map(r => r.ip),
-      datasets: [{ data: rows.map(r => r.total), backgroundColor: '#00ff00' }]
+      datasets: [{ data: rows.map(r => r.total), backgroundColor: ['#4f46e5','#0891b2','#f59e0b','#ef4444','#22c55e','#a855f7','#14b8a6','#f97316','#84cc16','#64748b'] }]
     },
     options: { plugins: { legend: { display: false } } }
   });
@@ -246,7 +251,7 @@ async function loadModelHealth() {
       labels: ['Muy alta', 'Alta', 'Media', 'Baja'],
       datasets: [{
         data: [rows.very_high || 0, rows.high || 0, rows.medium || 0, rows.low || 0],
-        backgroundColor: ['#00ff00', '#6fff6f', '#c4ff80', '#ffffff']
+        backgroundColor: ['#16a34a', '#22c55e', '#f59e0b', '#ef4444']
       }]
     },
     options: { plugins: { legend: { position: 'bottom' } } }
@@ -314,6 +319,21 @@ async function loadUsers() {
       <td>${u.role}</td>
       <td>${u.is_active ? 'sí' : 'no'}</td>
       <td><button onclick="changePassword(${u.id})">Cambiar</button></td>
+    </tr>
+  `).join('');
+}
+
+async function loadModelMetrics() {
+  const res = await fetch('/dashboard/api/model-metrics');
+  const rows = await res.json();
+  const tbody = document.querySelector('#model-metrics tbody');
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.label_es}</td>
+      <td>${(r.precision * 100).toFixed(1)}%</td>
+      <td>${(r.recall * 100).toFixed(1)}%</td>
+      <td>${(r.f1 * 100).toFixed(1)}%</td>
+      <td>${r.support}</td>
     </tr>
   `).join('');
 }
@@ -431,9 +451,10 @@ loadCandidates();
 loadUsers();
 loadTopIps();
 loadModelHealth();
+loadModelMetrics();
 updateChartSize(document.getElementById('chart-size').value);
 loadDistribution();
-setInterval(() => { loadLogs(); loadIntel(); loadDistribution(); loadCandidates(); loadTopIps(); loadModelHealth(); }, 7000);
+setInterval(() => { loadLogs(); loadIntel(); loadDistribution(); loadCandidates(); loadTopIps(); loadModelHealth(); loadModelMetrics(); }, 7000);
 </script>
 </body>
 </html>
