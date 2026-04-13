@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard SOC</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="dashboard-theme">
+  <header class="topbar">
+    <div class="container nav">
+      <div class="brand">Dashboard SOC</div>
+      <nav>
+        <span style="margin-left:1rem;">{{ current_role }}</span>
+        <form method="post" action="/dashboard/logout" style="display:inline;">
+          <button type="submit" class="btn small">Cerrar sesión</button>
+        </form>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <nav class="tab-nav card">
+      <button class="tab-link active" data-tab="tab-overview">Resumen</button>
+      <button class="tab-link" data-tab="tab-training">Entrenamiento</button>
+      <button class="tab-link" data-tab="tab-candidates">Candidatos IA</button>
+      <button class="tab-link" data-tab="tab-events">Eventos</button>
+      <button class="tab-link" data-tab="tab-intel">Intel IP</button>
+      <button class="tab-link" data-tab="tab-users">Usuarios</button>
+    </nav>
+
+    <section id="tab-overview" class="tab-content active">
+      <div class="grid">
+        <div class="card"><h3>Total eventos</h3><p>{{ stats['total'] }}</p></div>
+        <div class="card"><h3>Ataques detectados</h3><p>{{ stats['attacks'] or 0 }}</p></div>
+        <div class="card"><h3>IPs únicas</h3><p>{{ stats['unique_ips'] }}</p></div>
+        <div class="card"><h3>Alta severidad</h3><p>{{ stats['high_severity'] or 0 }}</p></div>
+      </div>
+
+      <section class="card">
+        <h3>Clasificación de ataques (Top)</h3>
+        <ul>
+          {% for item in top_types %}
+            <li><strong>{{ item.attack_label }}</strong>: {{ item.total }}</li>
+          {% else %}
+            <li>Sin eventos clasificados todavía.</li>
+          {% endfor %}
+        </ul>
+        <label for="chart-size">Tamaño gráfico: <span id="chart-size-label">360</span>px</label>
+        <input id="chart-size" type="range" min="220" max="520" value="360">
+        <div id="pie-wrapper" class="pie-wrapper">
+          <canvas id="attackPie"></canvas>
+        </div>
+        <div class="grid">
+          <div class="card">
+            <h4>Top IPs por tráfico</h4>
+            <canvas id="topIpsChart" height="140"></canvas>
+          </div>
+          <div class="card">
+            <h4>Nivel de confianza IA</h4>
+            <p><small>Distribuye ataques detectados por nivel de confianza del clasificador (muy alta/alta/media/baja).</small></p>
+            <canvas id="modelHealthChart" height="140"></canvas>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-training" class="tab-content">
+      <section class="card">
+        <h3>Entrenamiento con archivo OSSEC/filtro</h3>
+        <p>Archivo actual: <code>{{ training_file }}</code></p>
+        <p>Estado: <strong id="model-state">{{ 'cargado' if model_loaded else 'no cargado' }}</strong> ({{ model_samples }} muestras)</p>
+        <p>Sube un <code>.csv</code> (columnas sugeridas: <code>label,payload</code> o <code>Metodo,Cuerpo_Peticion,Codigo_Respuesta</code>) o un <code>.txt</code> de OSSEC (se procesa con el filtro de <code>/app/filtro/ossec_filter.py</code>). Máx: {{ max_upload_size }} bytes.</p>
+
+        <form id="upload-form" enctype="multipart/form-data">
+          <input id="dataset" type="file" name="dataset" accept=".txt,.csv" required>
+          <button type="submit">Subir y entrenar</button>
+          <button type="button" id="reload-model">Recargar desde disco</button>
+        </form>
+        <p><small>“Recargar desde disco” relee <code>{{ training_file }}</code> y vuelve a entrenar el modelo sin reiniciar el contenedor.</small></p>
+        <hr>
+        <h4>Personalización de front (ZIP)</h4>
+        <p>Estado front personalizado: <strong id="custom-front-state">{{ 'activo' if custom_front_active else 'inactivo' }}</strong></p>
+        <p>Backup disponible: <strong id="custom-front-backup">{{ 'sí' if custom_front_backup else 'no' }}</strong></p>
+        <p>Sube un ZIP con tus páginas (<code>index.html</code>, <code>contact.html</code>, etc.) y assets. Los assets se sirven desde <code>/custom-assets/...</code>.</p>
+        <form id="theme-upload-form" enctype="multipart/form-data">
+          <input id="theme_zip" type="file" name="theme_zip" accept=".zip" required>
+          <button type="submit">Subir ZIP de front</button>
+          <button type="button" id="restore-theme">Restaurar backup</button>
+        </form>
+        <pre id="train-status"></pre>
+      </section>
+    </section>
+
+    <section id="tab-candidates" class="tab-content">
+      <section class="card">
+        <h3>Candidatos de entrenamiento desde tráfico real</h3>
+        <p>Pendientes: <strong id="pending-count">{{ pending_candidates }}</strong></p>
+        <button type="button" id="train-candidates">Entrenar con aprobados</button>
+        <button type="button" id="approve-all-candidates">Aprobar todos pendientes</button>
+        <table id="candidates">
+          <thead>
+            <tr><th>ID</th><th>Fecha</th><th>Sugerido</th><th>Estado</th><th>Payload</th><th>Acción</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <h4>Estado de entrenamiento por tipo de ataque</h4>
+        <table id="model-metrics">
+          <thead><tr><th>Ataque</th><th>Precisión</th><th>Recall</th><th>F1</th><th>Muestras</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </section>
+
+    <section id="tab-events" class="tab-content">
+      <section class="card">
+        <h3>Eventos recientes</h3>
+        <label><input type="checkbox" id="only-attacks"> Mostrar solo ataques</label>
+        <table id="logs">
+          <thead>
+            <tr>
+              <th>Fecha</th><th>IP</th><th>Ruta</th><th>Clasificación</th><th>Severidad</th><th>Confianza</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </section>
+
+    <section id="tab-intel" class="tab-content">
+      <section class="card">
+        <h3>Inteligencia por IP</h3>
+        <p>Este honeypot clasifica tráfico con reglas + red neuronal (MLP). Para producción puedes enviar logs a <strong>{{ siem_hint }}</strong>, Wazuh o Elastic SIEM para correlación avanzada.</p>
+        <table id="intel">
+          <thead><tr><th>IP</th><th>Eventos</th><th>Ataques</th><th>Confianza máx.</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </section>
+
+    <section id="tab-users" class="tab-content">
+      <section class="card">
+        <h3>Administración de usuarios</h3>
+        <form id="create-user-form">
+          <input type="text" id="new-username" placeholder="Nuevo usuario" required>
+          <input type="password" id="new-password" placeholder="Contraseña (mínimo 8)" required>
+          <select id="new-role">
+            <option value="analyst">Analyst</option>
+            <option value="admin">Admin</option>
+          </select>
+          <button type="submit">Crear usuario</button>
+        </form>
+        <table id="users-table">
+          <thead><tr><th>ID</th><th>Usuario</th><th>Rol</th><th>Activo</th><th>Cambiar contraseña</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </section>
+  </main>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+let pieChart = null;
+let topIpsChart = null;
+let modelHealthChart = null;
+const tabLinks = document.querySelectorAll('.tab-link');
+const tabContents = document.querySelectorAll('.tab-content');
+
+tabLinks.forEach(btn => {
+  btn.addEventListener('click', () => {
+    tabLinks.forEach(x => x.classList.remove('active'));
+    tabContents.forEach(x => x.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(btn.dataset.tab).classList.add('active');
+  });
+});
+
+async function loadLogs(){
+  const onlyAttacks = document.getElementById('only-attacks').checked ? '1' : '0';
+  const res = await fetch('/dashboard/api/logs?only_attacks=' + onlyAttacks);
+  const rows = await res.json();
+  const tbody = document.querySelector('#logs tbody');
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.timestamp}</td>
+      <td>${r.ip || ''}</td>
+      <td>${r.path}</td>
+      <td>${r.attack_type}</td>
+      <td>${r.severity}</td>
+      <td>${r.confidence}</td>
+    </tr>
+  `).join('');
+}
+
+async function loadIntel(){
+  const res = await fetch('/dashboard/api/intel');
+  const rows = await res.json();
+  const tbody = document.querySelector('#intel tbody');
+  tbody.innerHTML = rows.map(r => `
+    <tr><td>${r.ip || ''}</td><td>${r.total}</td><td>${r.attacks}</td><td>${r.max_confidence}</td></tr>
+  `).join('');
+}
+
+async function loadDistribution(){
+  const res = await fetch('/dashboard/api/distribution');
+  const rows = await res.json();
+
+  const labels = rows.map(r => r.attack_label || r.attack_type);
+  const values = rows.map(r => r.total);
+
+  const canvas = document.getElementById('attackPie');
+  const ctx = canvas.getContext('2d');
+  if (pieChart) pieChart.destroy();
+
+  pieChart = new Chart(ctx, {
+    type: 'pie',
+    data: {
+      labels,
+      datasets: [{
+        data: values,
+        backgroundColor: ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899']
+      }]
+    },
+    options: { plugins: { legend: { position: 'bottom' } } }
+  });
+}
+
+async function loadTopIps() {
+  const res = await fetch('/dashboard/api/top-ips');
+  const rows = await res.json();
+  const ctx = document.getElementById('topIpsChart').getContext('2d');
+  if (topIpsChart) topIpsChart.destroy();
+  topIpsChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: rows.map(r => r.ip),
+      datasets: [{ data: rows.map(r => r.total), backgroundColor: ['#4f46e5','#0891b2','#f59e0b','#ef4444','#22c55e','#a855f7','#14b8a6','#f97316','#84cc16','#64748b'] }]
+    },
+    options: { plugins: { legend: { display: false } } }
+  });
+}
+
+async function loadModelHealth() {
+  const res = await fetch('/dashboard/api/model-health');
+  const rows = await res.json();
+  const ctx = document.getElementById('modelHealthChart').getContext('2d');
+  if (modelHealthChart) modelHealthChart.destroy();
+  modelHealthChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: ['Muy alta', 'Alta', 'Media', 'Baja'],
+      datasets: [{
+        data: [rows.very_high || 0, rows.high || 0, rows.medium || 0, rows.low || 0],
+        backgroundColor: ['#16a34a', '#22c55e', '#f59e0b', '#ef4444']
+      }]
+    },
+    options: { plugins: { legend: { position: 'bottom' } } }
+  });
+}
+
+async function loadCandidates() {
+  const res = await fetch('/dashboard/api/candidates');
+  const rows = await res.json();
+  const tbody = document.querySelector('#candidates tbody');
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.id}</td>
+      <td>${r.timestamp}</td>
+      <td>${r.reviewed_label || r.suggested_label}</td>
+      <td>${r.status}</td>
+      <td>${(r.payload || '').slice(0, 120)}</td>
+      <td>${r.status === 'pending' ? `<button onclick="approveCandidate(${r.id}, '${r.suggested_label}')">Aprobar</button>` : ''}</td>
+    </tr>
+  `).join('');
+  document.getElementById('pending-count').innerText = rows.filter(x => x.status === 'pending').length;
+}
+
+async function approveCandidate(id, label) {
+  const res = await fetch('/dashboard/approve-candidate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, label }),
+  });
+  const data = await res.json();
+  setTrainStatus(data);
+  loadCandidates();
+}
+
+async function trainCandidates() {
+  const res = await fetch('/dashboard/train-candidates', { method: 'POST' });
+  const data = await res.json();
+  setTrainStatus(data);
+  loadCandidates();
+}
+
+async function approveAllCandidates() {
+  const rows = await (await fetch('/dashboard/api/candidates')).json();
+  const pending = rows.filter(r => r.status === 'pending');
+  for (const item of pending) {
+    await fetch('/dashboard/approve-candidate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: item.id, label: item.suggested_label }),
+    });
+  }
+  setTrainStatus({ ok: true, approved: pending.length });
+  loadCandidates();
+}
+
+async function loadUsers() {
+  const res = await fetch('/dashboard/api/users');
+  if (res.status !== 200) return;
+  const rows = await res.json();
+  const tbody = document.querySelector('#users-table tbody');
+  tbody.innerHTML = rows.map(u => `
+    <tr>
+      <td>${u.id}</td>
+      <td>${u.username}</td>
+      <td>${u.role}</td>
+      <td>${u.is_active ? 'sí' : 'no'}</td>
+      <td><button onclick="changePassword(${u.id})">Cambiar</button></td>
+    </tr>
+  `).join('');
+}
+
+async function loadModelMetrics() {
+  const res = await fetch('/dashboard/api/model-metrics');
+  const rows = await res.json();
+  const tbody = document.querySelector('#model-metrics tbody');
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.label_es}</td>
+      <td>${(r.precision * 100).toFixed(1)}%</td>
+      <td>${(r.recall * 100).toFixed(1)}%</td>
+      <td>${(r.f1 * 100).toFixed(1)}%</td>
+      <td>${r.support}</td>
+    </tr>
+  `).join('');
+}
+
+async function createUser(event) {
+  event.preventDefault();
+  const payload = {
+    username: document.getElementById('new-username').value,
+    password: document.getElementById('new-password').value,
+    role: document.getElementById('new-role').value,
+  };
+  const res = await fetch('/dashboard/api/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  setTrainStatus(data);
+  loadUsers();
+}
+
+async function changePassword(userId) {
+  const password = prompt('Nueva contraseña (mínimo 8):');
+  if (!password) return;
+  const res = await fetch('/dashboard/api/users/' + userId + '/password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+  const data = await res.json();
+  setTrainStatus(data);
+}
+
+function updateChartSize(value) {
+  const wrapper = document.getElementById('pie-wrapper');
+  const label = document.getElementById('chart-size-label');
+  wrapper.style.width = value + 'px';
+  wrapper.style.height = value + 'px';
+  label.innerText = value;
+  loadDistribution();
+}
+
+function setTrainStatus(data) {
+  document.getElementById('train-status').innerText = JSON.stringify(data, null, 2);
+  if (data.ok) {
+    document.getElementById('model-state').innerText = 'cargado';
+  }
+}
+
+async function reloadModel(){
+  const res = await fetch('/dashboard/reload-training', { method: 'POST' });
+  const data = await res.json();
+  setTrainStatus(data);
+}
+
+async function uploadDataset(event) {
+  event.preventDefault();
+  const input = document.getElementById('dataset');
+  if (!input.files.length) return;
+
+  const formData = new FormData();
+  formData.append('dataset', input.files[0]);
+
+  const res = await fetch('/dashboard/upload-ossec', {
+    method: 'POST',
+    body: formData,
+  });
+  const data = await res.json();
+  setTrainStatus(data);
+}
+
+async function uploadTheme(event) {
+  event.preventDefault();
+  const input = document.getElementById('theme_zip');
+  if (!input.files.length) return;
+
+  const formData = new FormData();
+  formData.append('theme_zip', input.files[0]);
+  const res = await fetch('/dashboard/upload-theme', { method: 'POST', body: formData });
+  const data = await res.json();
+  setTrainStatus(data);
+  if (typeof data.custom_front_active !== 'undefined') {
+    document.getElementById('custom-front-state').innerText = data.custom_front_active ? 'activo' : 'inactivo';
+  }
+  if (typeof data.custom_front_backup !== 'undefined') {
+    document.getElementById('custom-front-backup').innerText = data.custom_front_backup ? 'sí' : 'no';
+  }
+}
+
+async function restoreTheme() {
+  const res = await fetch('/dashboard/restore-theme', { method: 'POST' });
+  const data = await res.json();
+  setTrainStatus(data);
+  if (typeof data.custom_front_active !== 'undefined') {
+    document.getElementById('custom-front-state').innerText = data.custom_front_active ? 'activo' : 'inactivo';
+  }
+  if (typeof data.custom_front_backup !== 'undefined') {
+    document.getElementById('custom-front-backup').innerText = data.custom_front_backup ? 'sí' : 'no';
+  }
+}
+
+document.getElementById('upload-form').addEventListener('submit', uploadDataset);
+document.getElementById('theme-upload-form').addEventListener('submit', uploadTheme);
+document.getElementById('reload-model').addEventListener('click', reloadModel);
+document.getElementById('restore-theme').addEventListener('click', restoreTheme);
+document.getElementById('train-candidates').addEventListener('click', trainCandidates);
+document.getElementById('approve-all-candidates').addEventListener('click', approveAllCandidates);
+document.getElementById('create-user-form').addEventListener('submit', createUser);
+document.getElementById('only-attacks').addEventListener('change', loadLogs);
+document.getElementById('chart-size').addEventListener('input', (e) => updateChartSize(e.target.value));
+
+loadLogs();
+loadIntel();
+loadCandidates();
+loadUsers();
+loadTopIps();
+loadModelHealth();
+loadModelMetrics();
+updateChartSize(document.getElementById('chart-size').value);
+loadDistribution();
+setInterval(() => { loadLogs(); loadIntel(); loadDistribution(); loadCandidates(); loadTopIps(); loadModelHealth(); loadModelMetrics(); }, 7000);
+</script>
+</body>
+</html>
