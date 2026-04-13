@@ -69,3 +69,15 @@ th,td{padding:.45rem;border-bottom:1px solid #e2e8f0;text-align:left;font-size:.
 .status-error{color:#fff;background:var(--error);padding:.5rem .75rem;border-radius:8px}
 .status-info{color:#fff;background:var(--info);padding:.5rem .75rem;border-radius:8px}
 @media (max-width:900px){.hero{grid-template-columns:1fr}.footer{flex-direction:column;gap:.6rem}}
+
+/* Dashboard cyberpunk / 80s hacker style */
+.dashboard-theme{background:#030605;color:#8cff9a}
+.dashboard-theme .topbar{background:#020202;border-bottom:1px solid #1aff66}
+.dashboard-theme .card{background:#07100b;border:1px solid #1a4d2f;box-shadow:0 0 12px rgba(26,255,102,.15);color:#b8ffbf}
+.dashboard-theme .tab-link{background:#0b1f13;color:#9dffac;border:1px solid #1a4d2f}
+.dashboard-theme .tab-link.active{background:#0f3d20;color:#d2ffd8;border-color:#2aff78}
+.dashboard-theme table th,.dashboard-theme table td{border-bottom:1px solid #134026;color:#9cffac}
+.dashboard-theme code{color:#7bff9f}
+.dashboard-theme input,.dashboard-theme pre{background:#040a06;color:#9effaa;border:1px solid #1c5a36}
+.dashboard-theme pre{padding:.7rem;border-radius:8px;overflow:auto}
+.dashboard-theme button,.dashboard-theme .btn{background:#0f5b2e;color:#d8ffe0}

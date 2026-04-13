@@ -61,6 +61,69 @@ ATTACK_RULES = [
         "regex": r"(\.\./|%2e%2e%2f|%252e%252e%252f|etc/passwd|boot\.ini)",
     },
     {
+        "name": "lfi",
+        "severity": "high",
+        "confidence": 0.87,
+        "targets": ["query", "path"],
+        "regex": r"(php://filter|/proc/self/environ|/etc/passwd|/var/log/auth\.log|\.{2}/)",
+    },
+    {
+        "name": "rfi",
+        "severity": "high",
+        "confidence": 0.86,
+        "targets": ["query", "body"],
+        "regex": r"(https?://[^\s]+\.(txt|php|jpg)|include=https?://|require=https?://)",
+    },
+    {
+        "name": "ssrf",
+        "severity": "high",
+        "confidence": 0.87,
+        "targets": ["query", "body"],
+        "regex": r"(169\.254\.169\.254|localhost|127\.0\.0\.1|0\.0\.0\.0|file://|gopher://)",
+    },
+    {
+        "name": "xxe",
+        "severity": "high",
+        "confidence": 0.9,
+        "targets": ["body", "query"],
+        "regex": r"(<!doctype\s+[^>]*\[|<!entity\s+\w+\s+system|file:///etc/passwd)",
+    },
+    {
+        "name": "deserialization",
+        "severity": "high",
+        "confidence": 0.82,
+        "targets": ["body", "query"],
+        "regex": r"(java\.lang\.runtime|objectinputstream|ysoserial|__reduce__|ac ed 00 05|rO0AB)",
+    },
+    {
+        "name": "auth_bypass",
+        "severity": "high",
+        "confidence": 0.84,
+        "targets": ["query", "body", "path"],
+        "regex": r"(admin=true|is_admin=1|role=admin|bypass|password\s*=\s*'?'?\s*or\s*'1'='1)",
+    },
+    {
+        "name": "bruteforce",
+        "severity": "medium",
+        "confidence": 0.75,
+        "targets": ["path", "query", "body"],
+        "regex": r"(/login|/wp-login\.php|/xmlrpc\.php|invalid password|too many attempts)",
+    },
+    {
+        "name": "webshell_activity",
+        "severity": "high",
+        "confidence": 0.88,
+        "targets": ["path", "query", "body"],
+        "regex": r"(cmd=|c99\.php|r57\.php|wso\.php|shell_exec|passthru\()",
+    },
+    {
+        "name": "file_upload_abuse",
+        "severity": "high",
+        "confidence": 0.85,
+        "targets": ["path", "body", "query"],
+        "regex": r"(multipart/form-data|filename=.*\.(php|jsp|asp|aspx|exe|sh)|/upload|content-type:\s*application/x-php)",
+    },
+    {
         "name": "command_injection",
         "severity": "high",
         "confidence": 0.86,
@@ -78,7 +141,23 @@ ATTACK_RULES = [
 
 SEVERITY_WEIGHT = {"low": 1, "medium": 2, "high": 3}
 ALLOWED_UPLOAD_EXTENSIONS = {".txt", ".csv"}
-VALID_LABELS = {"xss", "sqli", "path_traversal", "command_injection", "scanner_bot", "benign"}
+VALID_LABELS = {
+    "xss",
+    "sqli",
+    "path_traversal",
+    "command_injection",
+    "scanner_bot",
+    "lfi",
+    "rfi",
+    "ssrf",
+    "xxe",
+    "deserialization",
+    "auth_bypass",
+    "bruteforce",
+    "webshell_activity",
+    "file_upload_abuse",
+    "benign",
+}
 ALLOWED_THEME_EXTENSIONS = {".html", ".css", ".js", ".png", ".jpg", ".jpeg", ".svg", ".webp", ".gif", ".ico"}
 DEFAULT_BENIGN_SAMPLES = [
     "GET /",
@@ -191,7 +270,7 @@ class AdaptiveClassifier:
                 "notes": "mlp_model=benign_or_low_confidence",
             }
 
-        severity = "medium" if best_label in {"path_traversal", "scanner_bot"} else "high"
+        severity = "medium" if best_label in {"path_traversal", "scanner_bot", "bruteforce"} else "high"
         return {
             "is_attack": 1,
             "attack_type": best_label,
@@ -212,6 +291,15 @@ def normalize_label(raw_label, payload):
         "xss_attack": "xss",
         "cmdi": "command_injection",
         "rce": "command_injection",
+        "local_file_inclusion": "lfi",
+        "remote_file_inclusion": "rfi",
+        "server_side_request_forgery": "ssrf",
+        "xml_external_entity": "xxe",
+        "deser": "deserialization",
+        "authbypass": "auth_bypass",
+        "brute_force": "bruteforce",
+        "webshell": "webshell_activity",
+        "upload_abuse": "file_upload_abuse",
         "attack": "command_injection",
         "malicious": "command_injection",
         "normal": "benign",
@@ -422,6 +510,20 @@ def init_db():
         )
         """
     )
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS training_candidates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            suggested_label TEXT NOT NULL,
+            reviewed_label TEXT,
+            source TEXT DEFAULT 'runtime',
+            event_id INTEGER,
+            status TEXT DEFAULT 'pending'
+        )
+        """
+    )
     db.commit()
 
     existing_columns = {row[1] for row in db.execute("PRAGMA table_info(attack_logs)").fetchall()}
@@ -486,7 +588,7 @@ def detect_attack(features):
 def log_event(classification):
     db = get_db()
     headers_dump = "\n".join(f"{k}: {v}" for k, v in request.headers.items())
-    db.execute(
+    cursor = db.execute(
         """
         INSERT INTO attack_logs(
             timestamp, ip, method, path, user_agent, query_string, body, headers, notes,
@@ -510,7 +612,43 @@ def log_event(classification):
             classification["confidence"],
         ),
     )
+    event_id = cursor.lastrowid
+    if classification["is_attack"] == 1 and classification["confidence"] >= 0.86 and classification["attack_type"] in VALID_LABELS:
+        payload = " ".join(
+            [
+                request.path,
+                request.query_string.decode("utf-8", errors="ignore"),
+                request.get_data(as_text=True)[:2000],
+            ]
+        ).strip()
+        save_training_candidate(payload, classification["attack_type"], event_id)
     db.commit()
+
+
+def save_training_candidate(payload, suggested_label, event_id=None):
+    db = get_db()
+    normalized_payload = (payload or "").strip()[:3000]
+    if not normalized_payload:
+        return
+
+    exists = db.execute(
+        """
+        SELECT id FROM training_candidates
+        WHERE payload = ? AND suggested_label = ? AND status = 'pending'
+        LIMIT 1
+        """,
+        (normalized_payload, suggested_label),
+    ).fetchone()
+    if exists:
+        return
+
+    db.execute(
+        """
+        INSERT INTO training_candidates(timestamp, payload, suggested_label, source, event_id, status)
+        VALUES (?, ?, ?, ?, ?, 'pending')
+        """,
+        (datetime.utcnow().isoformat(), normalized_payload, suggested_label, "runtime", event_id),
+    )
 
 
 def basic_auth_required(f):
@@ -540,10 +678,13 @@ def global_logger():
         "/dashboard/api/logs",
         "/dashboard/api/intel",
         "/dashboard/api/distribution",
+        "/dashboard/api/candidates",
         "/dashboard/reload-training",
         "/dashboard/upload-ossec",
         "/dashboard/upload-theme",
         "/dashboard/restore-theme",
+        "/dashboard/approve-candidate",
+        "/dashboard/train-candidates",
         "/static/style.css",
     }
     if request.path not in ignore_paths:
@@ -685,6 +826,10 @@ def dashboard():
         """
     ).fetchall()
 
+    pending_candidates = db.execute(
+        "SELECT COUNT(*) AS total FROM training_candidates WHERE status = 'pending'"
+    ).fetchone()
+
     return render_template(
         "dashboard.html",
         stats=stats,
@@ -696,6 +841,7 @@ def dashboard():
         max_upload_size=app.config["MAX_CONTENT_LENGTH"],
         custom_front_active=os.path.exists(custom_front_templates_dir()),
         custom_front_backup=backup_front_exists(),
+        pending_candidates=pending_candidates["total"] if pending_candidates else 0,
     )
 
 
@@ -876,6 +1022,73 @@ def dashboard_distribution():
         """
     ).fetchall()
     return jsonify([dict(row) for row in rows])
+
+
+@app.route("/dashboard/api/candidates")
+@basic_auth_required
+def dashboard_candidates():
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT id, timestamp, suggested_label, reviewed_label, status, payload, source
+        FROM training_candidates
+        ORDER BY id DESC
+        LIMIT 150
+        """
+    ).fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.route("/dashboard/approve-candidate", methods=["POST"])
+@basic_auth_required
+def approve_candidate():
+    data = request.get_json(silent=True) or {}
+    candidate_id = data.get("id")
+    label = (data.get("label") or "").strip().lower()
+    if not candidate_id:
+        return jsonify({"ok": False, "error": "missing_id"}), 400
+    if label and label not in VALID_LABELS:
+        return jsonify({"ok": False, "error": "invalid_label"}), 400
+
+    db = get_db()
+    row = db.execute("SELECT id, suggested_label FROM training_candidates WHERE id = ?", (candidate_id,)).fetchone()
+    if not row:
+        return jsonify({"ok": False, "error": "candidate_not_found"}), 404
+
+    reviewed_label = label or row["suggested_label"]
+    db.execute(
+        """
+        UPDATE training_candidates
+        SET status = 'approved', reviewed_label = ?
+        WHERE id = ?
+        """,
+        (reviewed_label, candidate_id),
+    )
+    db.commit()
+    return jsonify({"ok": True, "id": candidate_id, "label": reviewed_label})
+
+
+@app.route("/dashboard/train-candidates", methods=["POST"])
+@basic_auth_required
+def train_from_candidates():
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT COALESCE(reviewed_label, suggested_label) AS label, payload
+        FROM training_candidates
+        WHERE status = 'approved'
+        """
+    ).fetchall()
+    if not rows:
+        return jsonify({"ok": False, "error": "no_approved_candidates"}), 400
+
+    samples = [(row["label"], row["payload"]) for row in rows if row["label"] in VALID_LABELS]
+    result = adaptive_model.train_from_samples(samples)
+    status = 200 if result.get("ok") else 400
+    if result.get("ok"):
+        db.execute("UPDATE training_candidates SET status = 'trained' WHERE status = 'approved'")
+        db.commit()
+    return jsonify(result), status
 
 
 if __name__ == "__main__":

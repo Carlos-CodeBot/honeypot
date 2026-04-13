@@ -6,7 +6,7 @@
   <title>Dashboard SOC</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body>
+<body class="dashboard-theme">
   <header class="topbar">
     <div class="container nav">
       <div class="brand">Dashboard SOC</div>
@@ -18,6 +18,7 @@
     <nav class="tab-nav card">
       <button class="tab-link active" data-tab="tab-overview">Resumen</button>
       <button class="tab-link" data-tab="tab-training">Entrenamiento</button>
+      <button class="tab-link" data-tab="tab-candidates">Candidatos IA</button>
       <button class="tab-link" data-tab="tab-events">Eventos</button>
       <button class="tab-link" data-tab="tab-intel">Intel IP</button>
     </nav>
@@ -71,6 +72,20 @@
           <button type="button" id="restore-theme">Restaurar backup</button>
         </form>
         <pre id="train-status"></pre>
+      </section>
+    </section>
+
+    <section id="tab-candidates" class="tab-content">
+      <section class="card">
+        <h3>Candidatos de entrenamiento desde tráfico real</h3>
+        <p>Pendientes: <strong id="pending-count">{{ pending_candidates }}</strong></p>
+        <button type="button" id="train-candidates">Entrenar con aprobados</button>
+        <table id="candidates">
+          <thead>
+            <tr><th>ID</th><th>Fecha</th><th>Sugerido</th><th>Estado</th><th>Payload</th><th>Acción</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
       </section>
     </section>
 
@@ -166,6 +181,41 @@ async function loadDistribution(){
   });
 }
 
+async function loadCandidates() {
+  const res = await fetch('/dashboard/api/candidates');
+  const rows = await res.json();
+  const tbody = document.querySelector('#candidates tbody');
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.id}</td>
+      <td>${r.timestamp}</td>
+      <td>${r.reviewed_label || r.suggested_label}</td>
+      <td>${r.status}</td>
+      <td>${(r.payload || '').slice(0, 120)}</td>
+      <td>${r.status === 'pending' ? `<button onclick="approveCandidate(${r.id}, '${r.suggested_label}')">Aprobar</button>` : ''}</td>
+    </tr>
+  `).join('');
+  document.getElementById('pending-count').innerText = rows.filter(x => x.status === 'pending').length;
+}
+
+async function approveCandidate(id, label) {
+  const res = await fetch('/dashboard/approve-candidate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, label }),
+  });
+  const data = await res.json();
+  setTrainStatus(data);
+  loadCandidates();
+}
+
+async function trainCandidates() {
+  const res = await fetch('/dashboard/train-candidates', { method: 'POST' });
+  const data = await res.json();
+  setTrainStatus(data);
+  loadCandidates();
+}
+
 function updateChartSize(value) {
   const wrapper = document.getElementById('pie-wrapper');
   const label = document.getElementById('chart-size-label');
@@ -238,14 +288,16 @@ document.getElementById('upload-form').addEventListener('submit', uploadDataset)
 document.getElementById('theme-upload-form').addEventListener('submit', uploadTheme);
 document.getElementById('reload-model').addEventListener('click', reloadModel);
 document.getElementById('restore-theme').addEventListener('click', restoreTheme);
+document.getElementById('train-candidates').addEventListener('click', trainCandidates);
 document.getElementById('only-attacks').addEventListener('change', loadLogs);
 document.getElementById('chart-size').addEventListener('input', (e) => updateChartSize(e.target.value));
 
 loadLogs();
 loadIntel();
+loadCandidates();
 updateChartSize(document.getElementById('chart-size').value);
 loadDistribution();
-setInterval(() => { loadLogs(); loadIntel(); loadDistribution(); }, 7000);
+setInterval(() => { loadLogs(); loadIntel(); loadDistribution(); loadCandidates(); }, 7000);
 </script>
 </body>
 </html>

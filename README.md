@@ -59,12 +59,19 @@ En `.env` puedes ajustar:
 - `/dashboard/upload-ossec` subida segura de dataset para entrenar
 - `/dashboard/upload-theme` subida de ZIP para personalizar frontend (sin tocar detección)
 - `/dashboard/restore-theme` restaura el front anterior desde backup
+- `/dashboard/api/candidates` lista candidatos de entrenamiento desde tráfico real
+- `/dashboard/approve-candidate` aprueba/etiqueta candidato
+- `/dashboard/train-candidates` entrena modelo con candidatos aprobados
 - `/dashboard/reload-training` recarga entrenamiento desde `TRAINING_FILE`
 - `/dashboard/api/logs?only_attacks=1` logs clasificados
 - `/dashboard/api/intel` ranking por IP
 - `/dashboard/api/distribution` distribución para gráfica
 
 ## Formatos de dataset para entrenamiento
+
+Etiquetas soportadas actualmente:
+
+`xss`, `sqli`, `path_traversal`, `command_injection`, `scanner_bot`, `lfi`, `rfi`, `ssrf`, `xxe`, `deserialization`, `auth_bypass`, `bruteforce`, `webshell_activity`, `file_upload_abuse`, `benign`.
 
 ### TXT (recomendado)
 
