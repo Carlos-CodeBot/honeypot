@@ -78,6 +78,8 @@ th,td{padding:.45rem;border-bottom:1px solid #e2e8f0;text-align:left;font-size:.
 .dashboard-theme .topbar{background:#020202;border-bottom:1px solid #00ff00}
 .dashboard-theme .topbar a,.dashboard-theme .topbar span{color:#ffffff}
 .dashboard-theme .card{background:#061106;border:1px solid #00ff00;box-shadow:0 0 12px rgba(0,255,0,.22);color:#ffffff}
+.dashboard-theme .card{transition:transform .25s ease,box-shadow .25s ease}
+.dashboard-theme .card:hover{transform:translateY(-2px);box-shadow:0 0 18px rgba(0,255,0,.35)}
 .dashboard-theme .tab-link{background:#092009;color:#ffffff;border:1px solid #00ff00}
 .dashboard-theme .tab-link.active{background:#003900;color:#ffffff;border-color:#00ff00}
 .dashboard-theme table th,.dashboard-theme table td{border-bottom:1px solid #0a6d0a;color:#ffffff}
@@ -85,4 +87,10 @@ th,td{padding:.45rem;border-bottom:1px solid #e2e8f0;text-align:left;font-size:.
 .dashboard-theme input,.dashboard-theme pre,.dashboard-theme select{background:#040a06;color:#ffffff;border:1px solid #00ff00}
 .dashboard-theme pre{padding:.7rem;border-radius:8px;overflow:auto}
 .dashboard-theme button,.dashboard-theme .btn{background:#005f00;color:#ffffff;border:1px solid #00ff00}
+.dashboard-theme .brand{letter-spacing:1px;text-shadow:0 0 8px rgba(0,255,0,.8);animation:flicker 2.8s infinite}
+.dashboard-theme h3,.dashboard-theme h4{color:#ffffff;text-shadow:0 0 6px rgba(0,255,0,.45)}
 @keyframes scan{0%{transform:translateY(0)}100%{transform:translateY(6px)}}
+@keyframes flicker{
+  0%,18%,22%,25%,53%,57%,100%{opacity:1}
+  20%,24%,55%{opacity:.65}
+}

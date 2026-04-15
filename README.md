@@ -63,6 +63,7 @@ En `.env` puedes ajustar:
 - `/dashboard/restore-theme` restaura el front anterior desde backup
 - `/dashboard/api/candidates` lista candidatos de entrenamiento desde tráfico real
 - `/dashboard/approve-candidate` aprueba/etiqueta candidato
+- `/dashboard/reject-candidate` rechaza candidato
 - `/dashboard/train-candidates` entrena modelo con candidatos aprobados
 - `/dashboard/api/users` gestión de usuarios del panel (admin)
 - `/dashboard/reload-training` recarga entrenamiento desde `TRAINING_FILE`

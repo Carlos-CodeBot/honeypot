@@ -25,7 +25,7 @@
       <button class="tab-link" data-tab="tab-training">Entrenamiento</button>
       <button class="tab-link" data-tab="tab-candidates">Candidatos IA</button>
       <button class="tab-link" data-tab="tab-events">Eventos</button>
-      <button class="tab-link" data-tab="tab-intel">Inteligencia por IP</button>
+      <button class="tab-link" data-tab="tab-intel">Intel IP</button>
       <button class="tab-link" data-tab="tab-users">Usuarios</button>
     </nav>
 
@@ -38,7 +38,7 @@
       </div>
 
       <section class="card">
-        <h3>Clasificación de ataques</h3>
+        <h3>Clasificación de ataques (Top)</h3>
         <ul>
           {% for item in top_types %}
             <li><strong>{{ item.attack_label }}</strong>: {{ item.total }}</li>
@@ -67,10 +67,10 @@
 
     <section id="tab-training" class="tab-content">
       <section class="card">
-        <h3>Entrenamiento con archivo</h3>
+        <h3>Entrenamiento con archivo OSSEC/filtro</h3>
         <p>Archivo actual: <code>{{ training_file }}</code></p>
         <p>Estado: <strong id="model-state">{{ 'cargado' if model_loaded else 'no cargado' }}</strong> ({{ model_samples }} muestras)</p>
-        <p>Sube un <code>.csv</code> (columnas sugeridas: <code>label,payload</code> o <code>Metodo,Cuerpo_Peticion,Codigo_Respuesta</code>) o un <code>.txt</code> output de Heimdall para mejorar el modelo de IA en prediccion de ataques. el tamaño maximo permitido: 10MB.</p>
+        <p>Sube un <code>.csv</code> (columnas sugeridas: <code>label,payload</code> o <code>Metodo,Cuerpo_Peticion,Codigo_Respuesta</code>) o un <code>.txt</code> de OSSEC (se procesa con el filtro de <code>/app/filtro/ossec_filter.py</code>). Máx: {{ max_upload_size }} bytes.</p>
 
         <form id="upload-form" enctype="multipart/form-data">
           <input id="dataset" type="file" name="dataset" accept=".txt,.csv" required>
@@ -79,7 +79,7 @@
         </form>
         <p><small>“Recargar desde disco” relee <code>{{ training_file }}</code> y vuelve a entrenar el modelo sin reiniciar el contenedor.</small></p>
         <hr>
-        <h4>Personalización de front</h4>
+        <h4>Personalización de front (ZIP)</h4>
         <p>Estado front personalizado: <strong id="custom-front-state">{{ 'activo' if custom_front_active else 'inactivo' }}</strong></p>
         <p>Backup disponible: <strong id="custom-front-backup">{{ 'sí' if custom_front_backup else 'no' }}</strong></p>
         <p>Sube un ZIP con tus páginas (<code>index.html</code>, <code>contact.html</code>, etc.) y assets. Los assets se sirven desde <code>/custom-assets/...</code>.</p>
@@ -269,7 +269,7 @@ async function loadCandidates() {
       <td>${r.reviewed_label || r.suggested_label}</td>
       <td>${r.status}</td>
       <td>${(r.payload || '').slice(0, 120)}</td>
-      <td>${r.status === 'pending' ? `<button onclick="approveCandidate(${r.id}, '${r.suggested_label}')">Aprobar</button>` : ''}</td>
+      <td>${r.status === 'pending' ? `<button onclick="approveCandidate(${r.id}, '${r.suggested_label}')">Aprobar</button><button onclick="rejectCandidate(${r.id})">Rechazar</button>` : ''}</td>
     </tr>
   `).join('');
   document.getElementById('pending-count').innerText = rows.filter(x => x.status === 'pending').length;
@@ -280,6 +280,17 @@ async function approveCandidate(id, label) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, label }),
+  });
+  const data = await res.json();
+  setTrainStatus(data);
+  loadCandidates();
+}
+
+async function rejectCandidate(id) {
+  const res = await fetch('/dashboard/reject-candidate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
   });
   const data = await res.json();
   setTrainStatus(data);
@@ -445,6 +456,20 @@ document.getElementById('create-user-form').addEventListener('submit', createUse
 document.getElementById('only-attacks').addEventListener('change', loadLogs);
 document.getElementById('chart-size').addEventListener('input', (e) => updateChartSize(e.target.value));
 
+async function refreshDashboardData() {
+  const currentScroll = window.scrollY;
+  const activeTab = document.querySelector('.tab-link.active')?.dataset?.tab || 'tab-overview';
+
+  await Promise.all([loadLogs(), loadIntel(), loadCandidates(), loadUsers()]);
+  if (activeTab === 'tab-overview') {
+    await Promise.all([loadDistribution(), loadTopIps(), loadModelHealth()]);
+  }
+  if (activeTab === 'tab-candidates') {
+    await loadModelMetrics();
+  }
+  window.scrollTo({ top: currentScroll, behavior: 'auto' });
+}
+
 loadLogs();
 loadIntel();
 loadCandidates();
@@ -454,7 +479,7 @@ loadModelHealth();
 loadModelMetrics();
 updateChartSize(document.getElementById('chart-size').value);
 loadDistribution();
-setInterval(() => { loadLogs(); loadIntel(); loadDistribution(); loadCandidates(); loadTopIps(); loadModelHealth(); loadModelMetrics(); }, 7000);
+setInterval(refreshDashboardData, 7000);
 </script>
 </body>
 </html>

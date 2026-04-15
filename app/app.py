@@ -1243,6 +1243,31 @@ def approve_candidate():
     return jsonify({"ok": True, "id": candidate_id, "label": reviewed_label})
 
 
+@app.route("/dashboard/reject-candidate", methods=["POST"])
+@dashboard_auth_required
+def reject_candidate():
+    data = request.get_json(silent=True) or {}
+    candidate_id = data.get("id")
+    if not candidate_id:
+        return jsonify({"ok": False, "error": "missing_id"}), 400
+
+    db = get_db()
+    row = db.execute("SELECT id FROM training_candidates WHERE id = ?", (candidate_id,)).fetchone()
+    if not row:
+        return jsonify({"ok": False, "error": "candidate_not_found"}), 404
+
+    db.execute(
+        """
+        UPDATE training_candidates
+        SET status = 'rejected'
+        WHERE id = ?
+        """,
+        (candidate_id,),
+    )
+    db.commit()
+    return jsonify({"ok": True, "id": candidate_id})
+
+
 @app.route("/dashboard/train-candidates", methods=["POST"])
 @dashboard_auth_required
 def train_from_candidates():
