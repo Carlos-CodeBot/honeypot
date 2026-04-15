@@ -25,7 +25,7 @@
       <button class="tab-link" data-tab="tab-training">Entrenamiento</button>
       <button class="tab-link" data-tab="tab-candidates">Candidatos IA</button>
       <button class="tab-link" data-tab="tab-events">Eventos</button>
-      <button class="tab-link" data-tab="tab-intel">Intel IP</button>
+      <button class="tab-link" data-tab="tab-intel">Inteligencia por IP</button>
       <button class="tab-link" data-tab="tab-users">Usuarios</button>
     </nav>
 
@@ -38,7 +38,7 @@
       </div>
 
       <section class="card">
-        <h3>Clasificación de ataques (Top)</h3>
+        <h3>Clasificación de ataques</h3>
         <ul>
           {% for item in top_types %}
             <li><strong>{{ item.attack_label }}</strong>: {{ item.total }}</li>
@@ -58,11 +58,11 @@
           </div>
           <div class="card">
             <h4>Nivel de confianza IA</h4>
-            <p><small>Distribuye ataques detectados por nivel de confianza del clasificador (muy alta/alta/media/baja).</small></p>
+            <p><small>Distribuye ataques detectados por nivel de confianza del clasificador.</small></p>
             <canvas id="modelHealthChart" height="140"></canvas>
           </div>
           <div class="card">
-            <h4>Países que más atacan</h4>
+            <h4>Países de los Atacantes</h4>
             <canvas id="countriesChart" height="140"></canvas>
           </div>
         </div>
