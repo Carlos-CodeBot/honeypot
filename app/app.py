@@ -1,5 +1,6 @@
 import csv
 import io
+import ipaddress
 import os
 import posixpath
 import re
@@ -11,6 +12,7 @@ import tempfile
 import zipfile
 from datetime import datetime
 from functools import wraps
+from urllib import request as urllib_request
 from urllib.parse import unquote_plus
 
 import joblib
@@ -506,6 +508,44 @@ def backup_front_exists():
     return os.path.exists(os.path.join(CUSTOM_FRONT_DIR, "backup", "templates"))
 
 
+def resolve_country_for_ip(ip_value):
+    ip_value = (ip_value or "").strip()
+    if not ip_value:
+        return "Desconocido"
+
+    try:
+        parsed = ipaddress.ip_address(ip_value.split(",")[0].strip())
+    except ValueError:
+        return "Desconocido"
+
+    if parsed.is_private or parsed.is_loopback or parsed.is_link_local:
+        return "Red interna"
+
+    db = get_db()
+    cached = db.execute("SELECT country FROM ip_geo_cache WHERE ip = ?", (ip_value,)).fetchone()
+    if cached:
+        return cached["country"]
+
+    country = "Desconocido"
+    try:
+        with urllib_request.urlopen(f"http://ip-api.com/json/{ip_value}?fields=status,country", timeout=2) as response:
+            payload = json.loads(response.read().decode("utf-8", errors="ignore"))
+            if payload.get("status") == "success":
+                country = payload.get("country") or "Desconocido"
+    except Exception:
+        country = "Desconocido"
+
+    db.execute(
+        """
+        INSERT OR REPLACE INTO ip_geo_cache(ip, country, is_private, updated_at)
+        VALUES (?, ?, 0, ?)
+        """,
+        (ip_value, country, datetime.utcnow().isoformat()),
+    )
+    db.commit()
+    return country
+
+
 def get_db():
     if "db" not in g:
         g.db = sqlite3.connect(DB_PATH)
@@ -567,6 +607,16 @@ def init_db():
             role TEXT DEFAULT 'analyst',
             is_active INTEGER DEFAULT 1,
             created_at TEXT NOT NULL
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ip_geo_cache (
+            ip TEXT PRIMARY KEY,
+            country TEXT NOT NULL,
+            is_private INTEGER DEFAULT 0,
+            updated_at TEXT NOT NULL
         )
         """
     )
@@ -1123,7 +1173,12 @@ def dashboard_intel():
         """
     ).fetchall()
 
-    return jsonify([dict(row) for row in rows])
+    payload = []
+    for row in rows:
+        item = dict(row)
+        item["country"] = resolve_country_for_ip(item.get("ip"))
+        payload.append(item)
+    return jsonify(payload)
 
 
 @app.route("/dashboard/api/distribution")
@@ -1212,6 +1267,69 @@ def dashboard_model_metrics():
             }
         )
     return jsonify(sorted(pretty, key=lambda x: x["precision"], reverse=True))
+
+
+@app.route("/dashboard/api/country-stats")
+@dashboard_auth_required
+def dashboard_country_stats():
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT ip, COUNT(*) AS total
+        FROM attack_logs
+        WHERE is_attack = 1
+        GROUP BY ip
+        ORDER BY total DESC
+        LIMIT 300
+        """
+    ).fetchall()
+    country_counts = {}
+    for row in rows:
+        country = resolve_country_for_ip(row["ip"])
+        country_counts[country] = country_counts.get(country, 0) + row["total"]
+
+    ordered = sorted(country_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+    return jsonify([{"country": country, "total": total} for country, total in ordered])
+
+
+@app.route("/dashboard/export-wazuh")
+@dashboard_auth_required
+def export_wazuh_log():
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT timestamp, ip, method, path, user_agent, query_string, attack_type, severity, confidence
+        FROM attack_logs
+        WHERE is_attack = 1
+        ORDER BY id DESC
+        LIMIT 2000
+        """
+    ).fetchall()
+
+    lines = []
+    for row in rows:
+        country = resolve_country_for_ip(row["ip"])
+        event = {
+            "event_type": "honeypot_attack",
+            "timestamp": row["timestamp"],
+            "srcip": row["ip"],
+            "country": country,
+            "method": row["method"],
+            "path": row["path"],
+            "query": row["query_string"],
+            "user_agent": row["user_agent"],
+            "attack_type": row["attack_type"],
+            "severity": row["severity"],
+            "confidence": row["confidence"],
+        }
+        lines.append(json.dumps(event, ensure_ascii=False))
+
+    content = "\n".join(lines) + ("\n" if lines else "")
+    return Response(
+        content,
+        mimetype="text/plain",
+        headers={"Content-Disposition": "attachment; filename=honeypot_wazuh.log"},
+    )
 
 
 @app.route("/dashboard/approve-candidate", methods=["POST"])

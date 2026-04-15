@@ -85,12 +85,18 @@ th,td{padding:.45rem;border-bottom:1px solid #e2e8f0;text-align:left;font-size:.
 .dashboard-theme table th,.dashboard-theme table td{border-bottom:1px solid #0a6d0a;color:#ffffff}
 .dashboard-theme code{color:#00ff00}
 .dashboard-theme input,.dashboard-theme pre,.dashboard-theme select{background:#040a06;color:#ffffff;border:1px solid #00ff00}
+.dashboard-theme input[type="file"]{padding:.35rem}
+.dashboard-theme input[type="file"]::file-selector-button{background:#003f00;color:#fff;border:1px solid #00ff00;padding:.4rem .8rem;border-radius:6px;margin-right:.6rem;cursor:pointer}
+.dashboard-theme .table-scroll{max-height:290px;overflow:auto;border:1px solid #0a6d0a;border-radius:8px}
+.dashboard-theme .table-scroll table{margin:0}
 .dashboard-theme pre{padding:.7rem;border-radius:8px;overflow:auto}
 .dashboard-theme button,.dashboard-theme .btn{background:#005f00;color:#ffffff;border:1px solid #00ff00}
 .dashboard-theme .brand{letter-spacing:1px;text-shadow:0 0 8px rgba(0,255,0,.8);animation:flicker 2.8s infinite}
 .dashboard-theme h3,.dashboard-theme h4{color:#ffffff;text-shadow:0 0 6px rgba(0,255,0,.45)}
+.dashboard-theme::after{content:"";position:fixed;inset:-20%;background:radial-gradient(circle at 20% 20%,rgba(0,255,0,.12),transparent 45%),radial-gradient(circle at 80% 80%,rgba(0,255,0,.08),transparent 45%);animation:aurora 10s ease-in-out infinite alternate;pointer-events:none;z-index:0}
 @keyframes scan{0%{transform:translateY(0)}100%{transform:translateY(6px)}}
 @keyframes flicker{
   0%,18%,22%,25%,53%,57%,100%{opacity:1}
   20%,24%,55%{opacity:.65}
 }
+@keyframes aurora{0%{transform:translateX(-2%) translateY(-2%)}100%{transform:translateX(2%) translateY(2%)}}

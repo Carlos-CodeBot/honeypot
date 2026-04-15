@@ -72,6 +72,8 @@ En `.env` puedes ajustar:
 - `/dashboard/api/distribution` distribución para gráfica
 - `/dashboard/api/model-health` distribución de confianza del clasificador
 - `/dashboard/api/model-metrics` métricas de entrenamiento por clase (precisión/recall/F1)
+- `/dashboard/api/country-stats` países con mayor volumen de ataques
+- `/dashboard/export-wazuh` exporta `.log` listo para ingesta en Wazuh
 
 ## Formatos de dataset para entrenamiento
 
