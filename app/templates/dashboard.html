@@ -100,8 +100,10 @@
       <section class="card">
         <h3>Candidatos de entrenamiento desde tráfico real</h3>
         <p>Pendientes: <strong id="pending-count">{{ pending_candidates }}</strong></p>
-        <button type="button" id="train-candidates">Entrenar con aprobados</button>
-        <button type="button" id="approve-all-candidates">Aprobar todos pendientes</button>
+        <div class="action-bar">
+          <button type="button" id="train-candidates">Entrenar con aprobados</button>
+          <button type="button" id="approve-all-candidates">Aprobar todos pendientes</button>
+        </div>
         <div class="table-scroll">
           <table id="candidates">
             <thead>
@@ -141,7 +143,9 @@
       <section class="card">
         <h3>Inteligencia por IP</h3>
         <p>Este honeypot clasifica tráfico con reglas + red neuronal (MLP). Para producción puedes enviar logs a <strong>{{ siem_hint }}</strong>, Wazuh o Elastic SIEM para correlación avanzada.</p>
-        <button type="button" id="export-wazuh">Exportar .log para Wazuh</button>
+        <div class="action-bar">
+          <button type="button" id="export-wazuh">Exportar .log para Wazuh</button>
+        </div>
         <div class="table-scroll">
           <table id="intel">
             <thead><tr><th>IP</th><th>País</th><th>Eventos</th><th>Ataques</th><th>Confianza máx.</th></tr></thead>

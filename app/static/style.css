@@ -71,7 +71,7 @@ th,td{padding:.45rem;border-bottom:1px solid #e2e8f0;text-align:left;font-size:.
 @media (max-width:900px){.hero{grid-template-columns:1fr}.footer{flex-direction:column;gap:.6rem}}
 
 /* Dashboard cyberpunk / 80s hacker style */
-.dashboard-theme{background:#000000;color:#8cff9a;position:relative;overflow-x:hidden}
+.dashboard-theme{background:#000000 !important;color:#8cff9a;position:relative;overflow-x:hidden}
 .dashboard-theme::before{content:"";position:fixed;inset:0;background:repeating-linear-gradient(to bottom,rgba(0,255,0,.04),rgba(0,255,0,.04) 1px,transparent 1px,transparent 3px);pointer-events:none;animation:scan 8s linear infinite;z-index:0}
 .dashboard-theme>*{position:relative;z-index:1}
 .dashboard-theme{font-family:"Courier New","Lucida Console",monospace;color:#ffffff}
@@ -93,7 +93,13 @@ th,td{padding:.45rem;border-bottom:1px solid #e2e8f0;text-align:left;font-size:.
 .dashboard-theme button,.dashboard-theme .btn{background:#005f00;color:#ffffff;border:1px solid #00ff00}
 .dashboard-theme .brand{letter-spacing:1px;text-shadow:0 0 8px rgba(0,255,0,.8);animation:flicker 2.8s infinite}
 .dashboard-theme h3,.dashboard-theme h4{color:#ffffff;text-shadow:0 0 6px rgba(0,255,0,.45)}
-.dashboard-theme::after{content:"";position:fixed;inset:-20%;background:radial-gradient(circle at 20% 20%,rgba(0,255,0,.12),transparent 45%),radial-gradient(circle at 80% 80%,rgba(0,255,0,.08),transparent 45%);animation:aurora 10s ease-in-out infinite alternate;pointer-events:none;z-index:0}
+.dashboard-theme::after{content:"";position:fixed;inset:-20%;background:radial-gradient(circle at 20% 20%,rgba(0,255,0,.05),transparent 45%),radial-gradient(circle at 80% 80%,rgba(0,255,0,.03),transparent 45%);animation:aurora 10s ease-in-out infinite alternate;pointer-events:none;z-index:0}
+.dashboard-theme .action-bar{display:flex;gap:.6rem;flex-wrap:wrap;margin:.4rem 0 .9rem}
+.dashboard-theme .table-scroll{margin-top:.4rem}
+.dashboard-theme .table-scroll::-webkit-scrollbar{width:10px;height:10px}
+.dashboard-theme .table-scroll::-webkit-scrollbar-track{background:#010601}
+.dashboard-theme .table-scroll::-webkit-scrollbar-thumb{background:#00ff00;border-radius:8px;border:2px solid #010601}
+.dashboard-theme .table-scroll{scrollbar-color:#00ff00 #010601;scrollbar-width:thin}
 @keyframes scan{0%{transform:translateY(0)}100%{transform:translateY(6px)}}
 @keyframes flicker{
   0%,18%,22%,25%,53%,57%,100%{opacity:1}
