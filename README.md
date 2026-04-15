@@ -47,6 +47,21 @@ En `.env` puedes ajustar:
 - `MAX_UPLOAD_SIZE`
 - `FILTER_SCRIPT`
 
+## Despliegue recomendado con Nginx (producción)
+
+Este repo incluye `docker-compose.prod.yml` + `nginx/default.conf` para desplegar:
+
+- Flask servido por **Gunicorn** (no servidor dev).
+- Reverse proxy con **Nginx**.
+- Volumen persistente `/data`.
+- Headers `X-Forwarded-*` compatibles con `ProxyFix`.
+
+Comandos:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
 ## Endpoints relevantes
 
 - `/` landing corporativa

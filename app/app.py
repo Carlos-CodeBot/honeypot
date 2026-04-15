@@ -22,6 +22,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import classification_report
 from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -33,7 +34,11 @@ CUSTOM_FRONT_DIR = os.getenv("CUSTOM_FRONT_DIR", "/data/custom_front")
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "change-me-in-production")
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_UPLOAD_SIZE", "10485760"))
+app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_COOKIE_SECURE", "1") == "1"
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = os.getenv("SESSION_COOKIE_SAMESITE", "Lax")
 app.config["SITE_TITLE"] = os.getenv("SITE_TITLE", "NovaCore Cloud")
 app.config["SITE_SUBTITLE"] = os.getenv("SITE_SUBTITLE", "Infraestructura digital para empresas en crecimiento")
 app.config["THEME_COLOR"] = os.getenv("THEME_COLOR", "#376a12")
@@ -508,7 +513,7 @@ def backup_front_exists():
     return os.path.exists(os.path.join(CUSTOM_FRONT_DIR, "backup", "templates"))
 
 
-def resolve_country_for_ip(ip_value):
+def resolve_country_for_ip(ip_value, use_network=True):
     ip_value = (ip_value or "").strip()
     if not ip_value:
         return "Desconocido"
@@ -527,13 +532,14 @@ def resolve_country_for_ip(ip_value):
         return cached["country"]
 
     country = "Desconocido"
-    try:
-        with urllib_request.urlopen(f"http://ip-api.com/json/{ip_value}?fields=status,country", timeout=2) as response:
-            payload = json.loads(response.read().decode("utf-8", errors="ignore"))
-            if payload.get("status") == "success":
-                country = payload.get("country") or "Desconocido"
-    except Exception:
-        country = "Desconocido"
+    if use_network:
+        try:
+            with urllib_request.urlopen(f"http://ip-api.com/json/{ip_value}?fields=status,country", timeout=2) as response:
+                payload = json.loads(response.read().decode("utf-8", errors="ignore"))
+                if payload.get("status") == "success":
+                    country = payload.get("country") or "Desconocido"
+        except Exception:
+            country = "Desconocido"
 
     db.execute(
         """
@@ -1295,41 +1301,44 @@ def dashboard_country_stats():
 @app.route("/dashboard/export-wazuh")
 @dashboard_auth_required
 def export_wazuh_log():
-    db = get_db()
-    rows = db.execute(
-        """
-        SELECT timestamp, ip, method, path, user_agent, query_string, attack_type, severity, confidence
-        FROM attack_logs
-        WHERE is_attack = 1
-        ORDER BY id DESC
-        LIMIT 2000
-        """
-    ).fetchall()
+    try:
+        db = get_db()
+        rows = db.execute(
+            """
+            SELECT timestamp, ip, method, path, user_agent, query_string, attack_type, severity, confidence
+            FROM attack_logs
+            WHERE is_attack = 1
+            ORDER BY id DESC
+            LIMIT 2000
+            """
+        ).fetchall()
 
-    lines = []
-    for row in rows:
-        country = resolve_country_for_ip(row["ip"])
-        event = {
-            "event_type": "honeypot_attack",
-            "timestamp": row["timestamp"],
-            "srcip": row["ip"],
-            "country": country,
-            "method": row["method"],
-            "path": row["path"],
-            "query": row["query_string"],
-            "user_agent": row["user_agent"],
-            "attack_type": row["attack_type"],
-            "severity": row["severity"],
-            "confidence": row["confidence"],
-        }
-        lines.append(json.dumps(event, ensure_ascii=False))
+        lines = []
+        for row in rows:
+            country = resolve_country_for_ip(row["ip"], use_network=False)
+            event = {
+                "event_type": "honeypot_attack",
+                "timestamp": row["timestamp"],
+                "srcip": row["ip"],
+                "country": country,
+                "method": row["method"],
+                "path": row["path"],
+                "query": row["query_string"],
+                "user_agent": row["user_agent"],
+                "attack_type": row["attack_type"],
+                "severity": row["severity"],
+                "confidence": row["confidence"],
+            }
+            lines.append(json.dumps(event, ensure_ascii=False))
 
-    content = "\n".join(lines) + ("\n" if lines else "")
-    return Response(
-        content,
-        mimetype="text/plain",
-        headers={"Content-Disposition": "attachment; filename=honeypot_wazuh.log"},
-    )
+        content = "\n".join(lines) + ("\n" if lines else "")
+        return Response(
+            content,
+            mimetype="text/plain",
+            headers={"Content-Disposition": "attachment; filename=honeypot_wazuh.log"},
+        )
+    except Exception as exc:
+        return jsonify({"ok": False, "error": "wazuh_export_failed", "detail": str(exc)}), 500
 
 
 @app.route("/dashboard/approve-candidate", methods=["POST"])
