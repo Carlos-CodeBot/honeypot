@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admisiones</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="container">
+    <section class="card narrow">
+      <h1>Contacto de admisiones</h1>
+      {% if success %}
+        <p class="status-info">Gracias por tu solicitud. El equipo de admisiones te contactará pronto.</p>
+      {% else %}
+      <form method="post">
+        <label>Nombre completo <input name="name"></label>
+        <label>Correo institucional/personal <input name="email"></label>
+        <label>Programa de interés <input name="company"></label>
+        <label>Consulta <input name="message"></label>
+        <button>Enviar solicitud</button>
+      </form>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>
