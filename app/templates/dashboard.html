@@ -301,7 +301,7 @@ async function loadCandidates() {
       <td>${r.reviewed_label || r.suggested_label}</td>
       <td>${r.status}</td>
       <td>${(r.payload || '').slice(0, 120)}</td>
-      <td>${r.status === 'pending' ? `<button onclick="approveCandidate(${r.id}, '${r.suggested_label}')">Aprobar</button><button onclick="rejectCandidate(${r.id})">Rechazar</button>` : ''}</td>
+      <td>${r.status === 'pending' ? `<span class="row-actions"><button onclick="approveCandidate(${r.id}, '${r.suggested_label}')">Aprobar</button><button onclick="rejectCandidate(${r.id})">Rechazar</button></span>` : ''}</td>
     </tr>
   `).join('');
   document.getElementById('pending-count').innerText = rows.filter(x => x.status === 'pending').length;
