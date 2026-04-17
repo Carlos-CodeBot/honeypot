@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ config['SITE_TITLE'] }} | Portal Universitario</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div class="container nav">
+      <div class="brand">{{ config['SITE_TITLE'] }}</div>
+      <nav>
+        <a href="#oferta">Oferta académica</a>
+        <a href="#campus">Vida universitaria</a>
+        <a href="{{ url_for('contact') }}">Admisiones</a>
+        <a href="{{ url_for('login') }}" class="btn small">Intranet</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="hero container">
+    <div>
+      <p class="badge">Acreditación Nacional • Campus Digital</p>
+      <h1>{{ config['SITE_SUBTITLE'] }}</h1>
+      <p>{{ config['HERO_TAGLINE'] }}</p>
+      <div class="actions">
+        <a class="btn" href="{{ url_for('product', slug='ingenieria') }}">Facultad de Ingeniería</a>
+        <a class="btn ghost" href="{{ url_for('product', slug='salud') }}">Facultad de Salud</a>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Indicadores institucionales</h3>
+      <ul>
+        <li>Estudiantes activos: <strong>18,420</strong></li>
+        <li>Programas acreditados: <strong>42</strong></li>
+        <li>Becas asignadas 2026: <strong>3,120</strong></li>
+      </ul>
+      <form action="/search" method="get" class="searchbox">
+        <input name="q" placeholder="Buscar reglamento, cursos o noticias...">
+        <button>Buscar</button>
+      </form>
+    </div>
+  </section>
+
+  <section id="oferta" class="container cards">
+    <article class="card"><h3>Pregrado</h3><p>Carreras con enfoque en investigación, innovación y empleabilidad.</p></article>
+    <article class="card"><h3>Posgrado</h3><p>Especializaciones y maestrías para liderar sectores estratégicos.</p></article>
+    <article class="card"><h3>Educación Continua</h3><p>Diplomados y cursos cortos para actualización profesional.</p></article>
+  </section>
+
+  <section id="campus" class="container testimonials">
+    <h2>Comunidad universitaria</h2>
+    <blockquote>“Laboratorios modernos y profesores con alto nivel académico.” — Estudiante de Ingeniería</blockquote>
+    <blockquote>“El ecosistema de investigación conecta academia con industria.” — Docente Investigador</blockquote>
+  </section>
+
+  <footer class="container footer">
+    <span>© 2026 {{ config['SITE_TITLE'] }}. Portal institucional.</span>
+    <a href="/dashboard">Centro de Monitoreo</a>
+  </footer>
+</body>
+</html>
