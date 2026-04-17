@@ -419,11 +419,25 @@ function updateChartSize(value) {
   loadDistribution();
 }
 
+function setTrainingStage(label, percent, meta = '') {
+  const bounded = Math.max(0, Math.min(100, percent));
+  document.getElementById('train-stage-label').innerText = label;
+  document.getElementById('train-progress-value').innerText = `${bounded}%`;
+  document.getElementById('train-progress-bar').style.width = `${bounded}%`;
+  document.querySelector('.train-progress-track').setAttribute('aria-valuenow', String(bounded));
+  if (meta) {
+    document.getElementById('train-stage-meta').innerText = meta;
+  }
+}
+
 function setTrainStatus(data) {
   document.getElementById('train-status').innerText = JSON.stringify(data, null, 2);
   if (data.ok) {
     document.getElementById('model-state').innerText = 'cargado';
+    setTrainingStage('Listo', 100, `Entrenamiento finalizado. Muestras del modelo: ${data.samples || 'n/d'}`);
+    return;
   }
+  setTrainingStage('Error', 100, data.error || 'No se pudo completar el entrenamiento.');
 }
 
 async function reloadModel(){
@@ -432,7 +446,7 @@ async function reloadModel(){
   setTrainStatus(data);
 }
 
-async function uploadDataset(event) {
+function uploadDataset(event) {
   event.preventDefault();
   const input = document.getElementById('dataset');
   if (!input.files.length) return;
@@ -440,12 +454,58 @@ async function uploadDataset(event) {
   const formData = new FormData();
   formData.append('dataset', input.files[0]);
 
-  const res = await fetch('/dashboard/upload-ossec', {
-    method: 'POST',
-    body: formData,
-  });
-  const data = await res.json();
-  setTrainStatus(data);
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/dashboard/upload-ossec');
+
+  setTrainingStage('Subiendo archivo…', 5, `Archivo: ${input.files[0].name}`);
+
+  xhr.upload.onprogress = (progressEvent) => {
+    if (!progressEvent.lengthComputable) {
+      setTrainingStage('Subiendo archivo…', 20, 'Cargando dataset al servidor...');
+      return;
+    }
+    const uploadPercent = Math.min(65, Math.round((progressEvent.loaded / progressEvent.total) * 65));
+    setTrainingStage('Subiendo archivo…', uploadPercent, 'Cargando dataset al servidor...');
+  };
+
+  xhr.onreadystatechange = () => {
+    if (xhr.readyState === XMLHttpRequest.HEADERS_RECEIVED) {
+      setTrainingStage('Entrenando modelo…', 92, 'Aplicando parsing y entrenamiento en servidor...');
+    }
+  };
+
+  xhr.onload = () => {
+    let data = { ok: false, error: 'invalid_json_response' };
+    try {
+      data = JSON.parse(xhr.responseText || '{}');
+    } catch (error) {
+      setTrainingStage('Error', 100, 'El servidor respondió un formato inesperado.');
+      setTrainStatus(data);
+      return;
+    }
+    setTrainStatus(data);
+  };
+
+  xhr.onerror = () => {
+    setTrainingStage('Error de red', 100, 'No se pudo contactar al servidor.');
+    setTrainStatus({ ok: false, error: 'network_error' });
+  };
+
+  xhr.onloadstart = () => {
+    setTrainingStage('Subiendo archivo…', 10, 'Iniciando transferencia...');
+  };
+
+  xhr.onloadend = () => {
+    if (xhr.status >= 400) {
+      setTrainingStage('Error', 100, `Fallo de servidor (${xhr.status}).`);
+    }
+  };
+
+  xhr.upload.onload = () => {
+    setTrainingStage('Parseando dataset…', 78, 'Validando extensión y normalizando muestras...');
+  };
+
+  xhr.send(formData);
 }
 
 async function uploadTheme(event) {

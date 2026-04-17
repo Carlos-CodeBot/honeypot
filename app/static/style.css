@@ -110,3 +110,8 @@ th,td{padding:.45rem;border-bottom:1px solid #e2e8f0;text-align:left;font-size:.
   20%,24%,55%{opacity:.65}
 }
 @keyframes aurora{0%{transform:translateX(-2%) translateY(-2%)}100%{transform:translateX(2%) translateY(2%)}}
+.dashboard-theme .train-progress{margin:.8rem 0 1rem;padding:.8rem;border:1px solid #0a6d0a;border-radius:8px;background:#010901}
+.dashboard-theme .train-progress-head{display:flex;justify-content:space-between;align-items:center;gap:.8rem;font-size:.92rem}
+.dashboard-theme .train-progress-track{height:12px;margin:.45rem 0;background:#021a02;border:1px solid #0a6d0a;border-radius:999px;overflow:hidden}
+.dashboard-theme .train-progress-fill{height:100%;width:0;background:linear-gradient(90deg,#00ff66,#00ff00);box-shadow:0 0 10px rgba(0,255,0,.55);transition:width .25s ease}
+.dashboard-theme .train-progress-meta{font-size:.8rem;color:#b9ffbf}
