@@ -81,6 +81,26 @@
           <button type="submit">Subir y entrenar</button>
           <button type="button" id="reload-model">Recargar desde disco</button>
         </form>
+
+        <div class="train-status">
+          <div class="train-status-header">
+            <span id="train-stage-label">Esperando archivo…</span>
+            <span id="train-progress-value">0%</span>
+          </div>
+
+          <div
+            class="train-progress-track"
+            role="progressbar"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+          >
+            <div id="train-progress-bar"></div>
+          </div>
+
+          <div id="train-stage-meta"></div>
+        </div>
+
         <p><small>“Recargar desde disco” relee <code>{{ training_file }}</code> y vuelve a entrenar el modelo sin reiniciar el contenedor.</small></p>
         <hr>
         <h4>Personalización de front</h4>
