@@ -25,7 +25,7 @@
       <button class="tab-link" data-tab="tab-training">Entrenamiento</button>
       <button class="tab-link" data-tab="tab-candidates">Candidatos IA</button>
       <button class="tab-link" data-tab="tab-events">Eventos</button>
-      <button class="tab-link" data-tab="tab-intel">Intel IP</button>
+      <button class="tab-link" data-tab="tab-intel">Inteligencia por IP</button>
       <button class="tab-link" data-tab="tab-users">Usuarios</button>
     </nav>
 
@@ -38,7 +38,7 @@
       </div>
 
       <section class="card">
-        <h3>Clasificación de ataques (Top)</h3>
+        <h3>Clasificación de ataques</h3>
         <ul>
           {% for item in top_types %}
             <li><strong>{{ item.attack_label }}</strong>: {{ item.total }}</li>
@@ -58,11 +58,11 @@
           </div>
           <div class="card">
             <h4>Nivel de confianza IA</h4>
-            <p><small>Distribuye ataques detectados por nivel de confianza del clasificador (muy alta/alta/media/baja).</small></p>
+            <p><small>Distribuye ataques detectados por nivel de confianza del clasificador.</small></p>
             <canvas id="modelHealthChart" height="140"></canvas>
           </div>
           <div class="card">
-            <h4>Países que más atacan</h4>
+            <h4>Países de los Atacantes</h4>
             <canvas id="countriesChart" height="140"></canvas>
           </div>
         </div>
@@ -71,11 +71,10 @@
 
     <section id="tab-training" class="tab-content">
       <section class="card">
-        <h3>Entrenamiento con archivo OSSEC/filtro</h3>
+        <h3>Entrenamiento con archivo</h3>
         <p>Archivo actual: <code>{{ training_file }}</code></p>
-        <p>Estado: <strong id="model-state">{{ 'cargado' if model_loaded else 'no cargado' }}</strong> (<span id="model-current-samples">{{ model_samples }}</span> muestras del modelo actual)</p>
-        <p>Total histórico acumulado de muestras entrenadas: <strong id="model-total-samples">{{ total_samples_seen }}</strong></p>
-        <p>Sube un <code>.csv</code> (columnas sugeridas: <code>label,payload</code> o <code>Metodo,Cuerpo_Peticion,Codigo_Respuesta</code>) o un <code>.txt</code> de OSSEC (se procesa con el filtro de <code>/app/filtro/ossec_filter.py</code>). Máx: {{ max_upload_size }} bytes.</p>
+        <p>Estado: <strong id="model-state">{{ 'cargado' if model_loaded else 'no cargado' }}</strong> ({{ model_samples }} muestras)</p>
+        <p>Sube un <code>.csv</code> (columnas sugeridas: <code>label,payload</code> o <code>Metodo,Cuerpo_Peticion,Codigo_Respuesta</code>) o un <code>.txt</code> de Heimdall (se procesa con el filtro de <code>/app/filtro/ossec_filter.py</code>). El peso maximo del archivo de subida es 10MB.</p>
 
         <form id="upload-form" enctype="multipart/form-data">
           <input id="dataset" type="file" name="dataset" accept=".txt,.csv" required>
@@ -153,7 +152,6 @@
     <section id="tab-intel" class="tab-content">
       <section class="card">
         <h3>Inteligencia por IP</h3>
-        <p>Este honeypot clasifica tráfico con reglas + red neuronal (MLP). Para producción puedes enviar logs a <strong>{{ siem_hint }}</strong>, Wazuh o Elastic SIEM para correlación avanzada.</p>
         <div class="action-bar">
           <button type="button" id="export-wazuh">Exportar .log para Wazuh</button>
         </div>
@@ -173,8 +171,8 @@
           <input type="text" id="new-username" placeholder="Nuevo usuario" required>
           <input type="password" id="new-password" placeholder="Contraseña (mínimo 8)" required>
           <select id="new-role">
-            <option value="analyst">Analyst</option>
-            <option value="admin">Admin</option>
+            <option value="analyst">Analista</option>
+            <option value="admin">Administrador</option>
           </select>
           <button type="submit">Crear usuario</button>
         </form>
