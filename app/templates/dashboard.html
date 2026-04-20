@@ -81,29 +81,19 @@
           <button type="submit">Subir y entrenar</button>
           <button type="button" id="reload-model">Recargar desde disco</button>
         </form>
-
-        <div class="train-status">
-          <div class="train-status-header">
-            <span id="train-stage-label">Esperando archivo…</span>
+        <div class="train-progress" aria-live="polite">
+          <div class="train-progress-head">
+            <strong id="train-stage-label">Listo para entrenar</strong>
             <span id="train-progress-value">0%</span>
           </div>
-
-          <div
-            class="train-progress-track"
-            role="progressbar"
-            aria-valuemin="0"
-            aria-valuemax="100"
-            aria-valuenow="0"
-          >
-            <div id="train-progress-bar"></div>
+          <div class="train-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div id="train-progress-bar" class="train-progress-fill"></div>
           </div>
-
-          <div id="train-stage-meta"></div>
+          <div id="train-stage-meta" class="train-progress-meta">Etapas: subiendo → parseando → entrenando → listo.</div>
         </div>
-
         <p><small>“Recargar desde disco” relee <code>{{ training_file }}</code> y vuelve a entrenar el modelo sin reiniciar el contenedor.</small></p>
         <hr>
-        <h4>Personalización de front</h4>
+        <h4>Personalización de front (ZIP)</h4>
         <p>Estado front personalizado: <strong id="custom-front-state">{{ 'activo' if custom_front_active else 'inactivo' }}</strong></p>
         <p>Backup disponible: <strong id="custom-front-backup">{{ 'sí' if custom_front_backup else 'no' }}</strong></p>
         <p>Sube un ZIP con tus páginas (<code>index.html</code>, <code>contact.html</code>, etc.) y assets. Los assets se sirven desde <code>/custom-assets/...</code>.</p>
@@ -444,7 +434,10 @@ function setTrainingStage(label, percent, meta = '') {
   document.getElementById('train-stage-label').innerText = label;
   document.getElementById('train-progress-value').innerText = `${bounded}%`;
   document.getElementById('train-progress-bar').style.width = `${bounded}%`;
-  document.querySelector('.train-progress-track').setAttribute('aria-valuenow', String(bounded));
+  const track = document.querySelector('.train-progress-track');
+  track.setAttribute('aria-valuenow', String(bounded));
+  track.classList.toggle('is-complete', bounded >= 100);
+  track.classList.toggle('is-active', bounded > 0 && bounded < 100);
   if (meta) {
     document.getElementById('train-stage-meta').innerText = meta;
   }
@@ -455,6 +448,12 @@ function setTrainStatus(data) {
   if (data.ok) {
     document.getElementById('model-state').innerText = 'cargado';
     setTrainingStage('Listo', 100, `Entrenamiento finalizado. Muestras del modelo: ${data.samples || 'n/d'}`);
+    if (typeof data.samples !== 'undefined') {
+      document.getElementById('model-current-samples').innerText = data.samples;
+    }
+    if (typeof data.total_samples_seen !== 'undefined') {
+      document.getElementById('model-total-samples').innerText = data.total_samples_seen;
+    }
     return;
   }
   setTrainingStage('Error', 100, data.error || 'No se pudo completar el entrenamiento.');

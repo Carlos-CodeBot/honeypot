@@ -46,6 +46,27 @@ En `.env` puedes ajustar:
 - `MODEL_PATH`
 - `MAX_UPLOAD_SIZE`
 - `FILTER_SCRIPT`
+- `ENABLE_PUBLIC_SITE` (1/0, habilita solo sitio público)
+- `ENABLE_DASHBOARD` (1/0, habilita solo panel SOC)
+- `FORWARD_LOG_URL` (URL del server dashboard para reenviar eventos)
+- `FORWARD_LOG_TOKEN` (token que envía el server público)
+- `INGEST_TOKEN` (token esperado por `/api/ingest-event`)
+
+## Separar sitio vulnerable y dashboard en servidores distintos
+
+Puedes desplegar en 2 hosts para segmentar riesgo:
+
+- **Server A (público/honeypot):**
+  - `ENABLE_PUBLIC_SITE=1`
+  - `ENABLE_DASHBOARD=0`
+  - `FORWARD_LOG_URL=https://dashboard.tu-dominio/api/ingest-event`
+  - `FORWARD_LOG_TOKEN=<token-compartido>`
+- **Server B (dashboard/SOC):**
+  - `ENABLE_PUBLIC_SITE=0`
+  - `ENABLE_DASHBOARD=1`
+  - `INGEST_TOKEN=<mismo-token-compartido>`
+
+Con esto, el tráfico real se clasifica en el server público y se reenvía al server dashboard para análisis, sin exponer el panel SOC en el host vulnerable.
 
 ## Despliegue recomendado con Nginx (producción)
 

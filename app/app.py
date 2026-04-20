@@ -48,6 +48,11 @@ app.config["HERO_TAGLINE"] = os.getenv("HERO_TAGLINE", "Plataforma integral de f
 app.config["ADMIN_USER"] = os.getenv("ADMIN_USER", "admin")
 app.config["ADMIN_PASS"] = os.getenv("ADMIN_PASS", "admin123")
 app.config["SIEM_HINT"] = os.getenv("SIEM_HINT", "crowdsec")
+app.config["ENABLE_PUBLIC_SITE"] = os.getenv("ENABLE_PUBLIC_SITE", "1") == "1"
+app.config["ENABLE_DASHBOARD"] = os.getenv("ENABLE_DASHBOARD", "1") == "1"
+app.config["FORWARD_LOG_URL"] = os.getenv("FORWARD_LOG_URL", "").strip()
+app.config["FORWARD_LOG_TOKEN"] = os.getenv("FORWARD_LOG_TOKEN", "").strip()
+app.config["INGEST_TOKEN"] = os.getenv("INGEST_TOKEN", "").strip()
 
 ALLOWED_UPLOAD_EXTENSIONS = {".txt", ".csv"}
 ALLOWED_THEME_EXTENSIONS = {".html", ".css", ".js", ".png", ".jpg", ".jpeg", ".svg", ".webp", ".gif", ".ico"}
@@ -267,6 +272,22 @@ def init_db():
         )
         """
     )
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS model_training_stats (
+            id INTEGER PRIMARY KEY CHECK(id = 1),
+            total_samples_seen INTEGER DEFAULT 0,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    db.execute(
+        """
+        INSERT OR IGNORE INTO model_training_stats(id, total_samples_seen, updated_at)
+        VALUES (1, 0, ?)
+        """,
+        (datetime.utcnow().isoformat(),),
+    )
     db.commit()
 
     existing_columns = {row[1] for row in db.execute("PRAGMA table_info(attack_logs)").fetchall()}
@@ -310,6 +331,21 @@ def init_db():
 def log_event(classification):
     db = get_db()
     headers_dump = "\n".join(f"{k}: {v}" for k, v in request.headers.items())
+    event_payload = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "ip": request.headers.get("X-Forwarded-For", request.remote_addr),
+        "method": request.method,
+        "path": request.path,
+        "user_agent": request.headers.get("User-Agent", ""),
+        "query_string": request.query_string.decode("utf-8", errors="ignore"),
+        "body": request.get_data(as_text=True)[:3000],
+        "headers": headers_dump[:5000],
+        "notes": classification["notes"],
+        "is_attack": classification["is_attack"],
+        "attack_type": classification["attack_type"],
+        "severity": classification["severity"],
+        "confidence": classification["confidence"],
+    }
     cursor = db.execute(
         """
         INSERT INTO attack_logs(
@@ -318,21 +354,7 @@ def log_event(classification):
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (
-            datetime.utcnow().isoformat(),
-            request.headers.get("X-Forwarded-For", request.remote_addr),
-            request.method,
-            request.path,
-            request.headers.get("User-Agent", ""),
-            request.query_string.decode("utf-8", errors="ignore"),
-            request.get_data(as_text=True)[:3000],
-            headers_dump[:5000],
-            classification["notes"],
-            classification["is_attack"],
-            classification["attack_type"],
-            classification["severity"],
-            classification["confidence"],
-        ),
+        tuple(event_payload.values()),
     )
     event_id = cursor.lastrowid
     if classification["is_attack"] == 1 and classification["confidence"] >= 0.86 and classification["attack_type"] in VALID_LABELS:
@@ -345,6 +367,50 @@ def log_event(classification):
         ).strip()
         save_training_candidate(payload, classification["attack_type"], event_id)
     db.commit()
+    forward_event_to_remote(event_payload)
+
+
+def forward_event_to_remote(event_payload):
+    target_url = app.config.get("FORWARD_LOG_URL")
+    if not target_url:
+        return
+    try:
+        data = json.dumps(event_payload).encode("utf-8")
+        req = urllib_request.Request(
+            target_url,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "X-Ingest-Token": app.config.get("FORWARD_LOG_TOKEN", ""),
+            },
+            method="POST",
+        )
+        with urllib_request.urlopen(req, timeout=2):
+            return
+    except Exception:
+        return
+
+
+def increment_total_model_samples(samples_count):
+    if not samples_count:
+        return
+    db = get_db()
+    db.execute(
+        """
+        UPDATE model_training_stats
+        SET total_samples_seen = total_samples_seen + ?, updated_at = ?
+        WHERE id = 1
+        """,
+        (int(samples_count), datetime.utcnow().isoformat()),
+    )
+    db.commit()
+
+
+def get_total_model_samples():
+    row = get_db().execute(
+        "SELECT total_samples_seen FROM model_training_stats WHERE id = 1",
+    ).fetchone()
+    return int(row["total_samples_seen"]) if row else 0
 
 
 def save_training_candidate(payload, suggested_label, event_id=None):
@@ -421,6 +487,8 @@ def request_entity_too_large(error):
 
 @app.before_request
 def global_logger():
+    if not app.config["ENABLE_PUBLIC_SITE"]:
+        return
     ignore_prefixes = ("/dashboard", "/static/", "/custom-assets/")
     if not request.path.startswith(ignore_prefixes):
         features = {
@@ -431,6 +499,22 @@ def global_logger():
         }
         classification = detect_attack(features, adaptive_model)
         log_event(classification)
+
+
+@app.before_request
+def route_mode_guard():
+    if request.path.startswith("/dashboard"):
+        if not app.config["ENABLE_DASHBOARD"]:
+            return jsonify({"ok": False, "error": "dashboard_disabled"}), 404
+        return None
+
+    public_exceptions = ("/static/", "/custom-assets/", "/api/ingest-event")
+    if request.path.startswith(public_exceptions):
+        return None
+
+    if not app.config["ENABLE_PUBLIC_SITE"]:
+        return jsonify({"ok": False, "error": "public_site_disabled"}), 404
+    return None
 
 
 @app.route("/")
@@ -619,6 +703,7 @@ def dashboard():
         pending_candidates=pending_candidates["total"] if pending_candidates else 0,
         current_user=g.dashboard_user,
         current_role="Administrador" if g.dashboard_user["role"] == "admin" else "Analista",
+        total_samples_seen=get_total_model_samples(),
     )
 
 
@@ -633,6 +718,9 @@ def reload_training():
     result = adaptive_model.train_from_samples(samples)
     status = 200 if result.get("ok") else 400
     result["training_file"] = TRAINING_FILE
+    if result.get("ok"):
+        increment_total_model_samples(result.get("samples"))
+        result["total_samples_seen"] = get_total_model_samples()
     return jsonify(result), status
 
 
@@ -667,6 +755,7 @@ def upload_ossec_file():
     result = adaptive_model.train_from_samples(samples)
     if not result.get("ok"):
         return jsonify(result), 400
+    increment_total_model_samples(result.get("samples"))
 
     os.makedirs(os.path.dirname(TRAINING_FILE), exist_ok=True)
     with open(TRAINING_FILE, "w", encoding="utf-8") as file_obj:
@@ -683,8 +772,62 @@ def upload_ossec_file():
             "model_path": MODEL_PATH,
             "parsed_samples": parsed_samples,
             "stages": ["uploading", "parsing", "training", "done"],
+            "total_samples_seen": get_total_model_samples(),
         }
     )
+
+
+@app.route("/api/ingest-event", methods=["POST"])
+def ingest_remote_event():
+    if not app.config["ENABLE_DASHBOARD"]:
+        return jsonify({"ok": False, "error": "dashboard_disabled"}), 404
+    token = request.headers.get("X-Ingest-Token", "")
+    expected = app.config.get("INGEST_TOKEN", "")
+    if not expected or token != expected:
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+
+    data = request.get_json(silent=True) or {}
+    required = {"timestamp", "path", "is_attack", "attack_type", "severity", "confidence"}
+    if not required.issubset(data.keys()):
+        return jsonify({"ok": False, "error": "invalid_payload"}), 400
+
+    db = get_db()
+    cursor = db.execute(
+        """
+        INSERT INTO attack_logs(
+            timestamp, ip, method, path, user_agent, query_string, body, headers, notes,
+            is_attack, attack_type, severity, confidence
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            data.get("timestamp"),
+            data.get("ip"),
+            data.get("method"),
+            data.get("path"),
+            data.get("user_agent"),
+            data.get("query_string"),
+            data.get("body"),
+            data.get("headers"),
+            data.get("notes", ""),
+            data.get("is_attack", 0),
+            data.get("attack_type", "benign"),
+            data.get("severity", "low"),
+            data.get("confidence", 0.0),
+        ),
+    )
+    event_id = cursor.lastrowid
+    if int(data.get("is_attack", 0)) == 1 and float(data.get("confidence", 0)) >= 0.86 and data.get("attack_type") in VALID_LABELS:
+        payload = " ".join(
+            [
+                data.get("path", ""),
+                data.get("query_string", ""),
+                data.get("body", ""),
+            ]
+        ).strip()
+        save_training_candidate(payload, data.get("attack_type"), event_id)
+    db.commit()
+    return jsonify({"ok": True})
 
 
 @app.route("/dashboard/upload-theme", methods=["POST"])
@@ -1019,8 +1162,10 @@ def train_from_candidates():
     result = adaptive_model.train_from_samples(samples)
     status = 200 if result.get("ok") else 400
     if result.get("ok"):
+        increment_total_model_samples(result.get("samples"))
         db.execute("UPDATE training_candidates SET status = 'trained' WHERE status = 'approved'")
         db.commit()
+        result["total_samples_seen"] = get_total_model_samples()
     return jsonify(result), status
 
 
