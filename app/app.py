@@ -37,18 +37,19 @@ FILTER_SCRIPT = os.getenv("FILTER_SCRIPT", os.path.join(BASE_DIR, "filtro", "oss
 CUSTOM_FRONT_DIR = os.getenv("CUSTOM_FRONT_DIR", "/data/custom_front")
 
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", "change-me-in-production")
+app.secret_key = os.getenv("SECRET_KEY")
+app.config["SECRET_KEY"] = app.secret_key
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_UPLOAD_SIZE", "10485760"))
-app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_COOKIE_SECURE", "1") == "1"
+app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_COOKIE_SECURE", "1").lower() in ("1", "true", "yes", "on")
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = os.getenv("SESSION_COOKIE_SAMESITE", "Lax")
 app.config["SITE_TITLE"] = os.getenv("SITE_TITLE", "NovaCore Cloud")
 app.config["SITE_SUBTITLE"] = os.getenv("SITE_SUBTITLE", "Infraestructura digital para empresas en crecimiento")
 app.config["THEME_COLOR"] = os.getenv("THEME_COLOR", "#376a12")
 app.config["HERO_TAGLINE"] = os.getenv("HERO_TAGLINE", "Plataforma integral de facturación, CRM y analítica")
-app.config["ADMIN_USER"] = os.getenv("ADMIN_USER", "admin")
-app.config["ADMIN_PASS"] = os.getenv("ADMIN_PASS", "admin123")
+app.config["ADMIN_USER"] = os.getenv("ADMIN_USER")
+app.config["ADMIN_PASS"] = os.getenv("ADMIN_PASS")
 app.config["SIEM_HINT"] = os.getenv("SIEM_HINT", "crowdsec")
 app.config["ENABLE_PUBLIC_SITE"] = os.getenv("ENABLE_PUBLIC_SITE", "1") == "1"
 app.config["ENABLE_DASHBOARD"] = os.getenv("ENABLE_DASHBOARD", "1") == "1"
@@ -304,24 +305,32 @@ def init_db():
     for col, col_type in required_columns.items():
         if col not in existing_columns:
             db.execute(f"ALTER TABLE attack_logs ADD COLUMN {col} {col_type}")
+    
+    admin_user = app.config.get("ADMIN_USER")
+    admin_pass = app.config.get("ADMIN_PASS")
 
-    admin_exists = db.execute(
-        "SELECT id FROM dashboard_users WHERE username = ?",
-        (app.config["ADMIN_USER"],),
-    ).fetchone()
-    if not admin_exists:
-        db.execute(
-            """
-            INSERT INTO dashboard_users(username, password_hash, role, is_active, created_at)
-            VALUES (?, ?, 'admin', 1, ?)
-            """,
-            (
-                app.config["ADMIN_USER"],
-                generate_password_hash(app.config["ADMIN_PASS"]),
-                datetime.utcnow().isoformat(),
-            ),
+    if admin_user and admin_pass:
+        admin_exists = db.execute(
+            "SELECT id FROM dashboard_users WHERE username = ?",
+            (admin_user,),
+        ).fetchone()
+
+        if not admin_exists:
+            db.execute(
+                """
+                INSERT INTO dashboard_users(username, password_hash, role, is_active, created_at)
+                VALUES (?, ?, 'admin', 1, ?)
+                """,
+                (
+                    admin_user,
+                    generate_password_hash(admin_pass),
+                    datetime.utcnow().isoformat(),
+                ),
+            )
+    else:
+        app.logger.warning(
+            "ADMIN_USER/ADMIN_PASS no están configurados; no se creó usuario admin inicial."
         )
-
     db.commit()
     db.close()
 
