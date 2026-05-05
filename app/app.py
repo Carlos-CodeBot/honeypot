@@ -58,6 +58,7 @@ app.config["ADMIN_USER"] = os.getenv("ADMIN_USER")
 app.config["ADMIN_PASS"] = os.getenv("ADMIN_PASS")
 app.config["SIEM_HINT"] = os.getenv("SIEM_HINT", "crowdsec")
 app.config["ENABLE_PUBLIC_SITE"] = env_bool("ENABLE_PUBLIC_SITE", True)
+app.config["ENABLE_SENSOR"] = env_bool("ENABLE_SENSOR", False)
 app.config["ENABLE_DASHBOARD"] = env_bool("ENABLE_DASHBOARD", True)
 app.config["FORWARD_LOG_URL"] = os.getenv("FORWARD_LOG_URL", "").strip()
 app.config["FORWARD_LOG_TOKEN"] = os.getenv("FORWARD_LOG_TOKEN", "").strip()
@@ -356,7 +357,9 @@ if not adaptive_model.loaded and os.path.exists(TRAINING_FILE):
 
 def log_event(classification):
     db = get_db()
+
     headers_dump = "\n".join(f"{k}: {v}" for k, v in request.headers.items())
+
     event_payload = {
         "timestamp": datetime.utcnow().isoformat(),
         "ip": request.headers.get("X-Forwarded-For", request.remote_addr),
@@ -366,33 +369,67 @@ def log_event(classification):
         "query_string": request.query_string.decode("utf-8", errors="ignore"),
         "body": request.get_data(as_text=True)[:3000],
         "headers": headers_dump[:5000],
-        "notes": classification["notes"],
-        "is_attack": classification["is_attack"],
-        "attack_type": classification["attack_type"],
-        "severity": classification["severity"],
-        "confidence": classification["confidence"],
+        "notes": classification.get("notes", ""),
+        "is_attack": classification.get("is_attack", 0),
+        "attack_type": classification.get("attack_type", "benign"),
+        "severity": classification.get("severity", "low"),
+        "confidence": classification.get("confidence", 0.0),
     }
-    cursor = db.execute(
-        """
-        INSERT INTO attack_logs(
-            timestamp, ip, method, path, user_agent, query_string, body, headers, notes,
-            is_attack, attack_type, severity, confidence
+
+    event_id = None
+
+    try:
+        cursor = db.execute(
+            """
+            INSERT INTO attack_logs(
+                timestamp, ip, method, path, user_agent, query_string, body, headers, notes,
+                is_attack, attack_type, severity, confidence
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_payload["timestamp"],
+                event_payload["ip"],
+                event_payload["method"],
+                event_payload["path"],
+                event_payload["user_agent"],
+                event_payload["query_string"],
+                event_payload["body"],
+                event_payload["headers"],
+                event_payload["notes"],
+                event_payload["is_attack"],
+                event_payload["attack_type"],
+                event_payload["severity"],
+                event_payload["confidence"],
+            ),
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        tuple(event_payload.values()),
-    )
-    event_id = cursor.lastrowid
-    if classification["is_attack"] == 1 and classification["confidence"] >= 0.86 and classification["attack_type"] in VALID_LABELS:
-        payload = " ".join(
-            [
-                request.path,
-                request.query_string.decode("utf-8", errors="ignore"),
-                request.get_data(as_text=True)[:2000],
-            ]
-        ).strip()
-        save_training_candidate(payload, classification["attack_type"], event_id)
-    db.commit()
+
+        event_id = cursor.lastrowid
+
+        if (
+            classification.get("is_attack") == 1
+            and classification.get("confidence", 0.0) >= 0.86
+            and classification.get("attack_type") in VALID_LABELS
+        ):
+            payload = " ".join(
+                [
+                    request.path,
+                    request.query_string.decode("utf-8", errors="ignore"),
+                    request.get_data(as_text=True)[:2000],
+                ]
+            ).strip()
+
+            save_training_candidate(
+                payload,
+                classification.get("attack_type"),
+                event_id,
+            )
+
+        db.commit()
+
+    except Exception as exc:
+        app.logger.exception("local_log_failed: %s", exc)
+
     forward_event_to_remote(event_payload)
 
 
@@ -533,6 +570,36 @@ def dashboard_admin_required(f):
 
     return decorated
 
+def log_event_payload(event_payload):
+    db = get_db()
+
+    cursor = db.execute(
+        """
+        INSERT INTO attack_logs(
+            timestamp, ip, method, path, user_agent, query_string, body, headers, notes,
+            is_attack, attack_type, severity, confidence
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            event_payload.get("timestamp"),
+            event_payload.get("ip"),
+            event_payload.get("method"),
+            event_payload.get("path"),
+            event_payload.get("user_agent"),
+            event_payload.get("query_string"),
+            event_payload.get("body"),
+            event_payload.get("headers"),
+            event_payload.get("notes"),
+            event_payload.get("is_attack", 0),
+            event_payload.get("attack_type", "benign"),
+            event_payload.get("severity", "low"),
+            event_payload.get("confidence", 0.0),
+        ),
+    )
+
+    db.commit()
+    return cursor.lastrowid
 
 @app.errorhandler(413)
 def request_entity_too_large(error):
@@ -566,7 +633,7 @@ def route_mode_guard():
             return jsonify({"ok": False, "error": "dashboard_disabled"}), 404
         return None
 
-    public_exceptions = ("/static/", "/custom-assets/", "/api/health",  "/api/ingest-event")
+    public_exceptions = ("/static/", "/custom-assets/", "/api/health",  "/api/ingest-event",  "/api/sensor-event" )
     if request.path.startswith(public_exceptions):
         return None
 
@@ -1266,6 +1333,73 @@ def change_dashboard_user_password(user_id):
     db.commit()
     return jsonify({"ok": True})
 
+@app.route("/api/sensor-event", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
+def sensor_event():
+    if not app.config.get("ENABLE_SENSOR"):
+        return jsonify({"ok": False, "error": "sensor_disabled"}), 404
+
+    original_ip = (
+        request.headers.get("X-Original-Remote-Addr")
+        or request.headers.get("X-Real-IP")
+        or request.remote_addr
+    )
+
+    original_method = request.headers.get("X-Original-Method", request.method)
+    original_uri = request.headers.get("X-Original-URI", request.full_path)
+    original_host = request.headers.get("X-Original-Host", request.host)
+    original_user_agent = request.headers.get("X-Original-User-Agent", request.headers.get("User-Agent", ""))
+
+    body_text = request.get_data(as_text=True, cache=False)[:4000]
+
+    headers_text = "\n".join(
+        f"{key}: {value}"
+        for key, value in request.headers.items()
+    )[:4000]
+
+    # Construye un request sintético para clasificación.
+    raw_text = " ".join(
+        [
+            original_uri or "",
+            body_text or "",
+            original_user_agent or "",
+            headers_text or "",
+        ]
+    )
+
+    features = extract_features(
+        path=original_uri,
+        query_string=original_uri,
+        body=body_text,
+        headers=headers_text,
+        user_agent=original_user_agent,
+    )
+
+    classification = detect_attack(features, adaptive_model)
+
+    event_payload = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "ip": original_ip,
+        "method": original_method,
+        "path": original_uri,
+        "user_agent": original_user_agent,
+        "query_string": original_uri,
+        "body": body_text,
+        "headers": headers_text,
+        "notes": f"sensor_event host={original_host}",
+        "is_attack": classification.get("is_attack", 0),
+        "attack_type": classification.get("attack_type", "benign"),
+        "severity": classification.get("severity", "low"),
+        "confidence": classification.get("confidence", 0.0),
+    }
+
+    try:
+        log_event_payload(event_payload)
+    except Exception as exc:
+        app.logger.exception("sensor_local_log_failed: %s", exc)
+
+    forward_event_to_remote(event_payload)
+
+    return jsonify({"ok": True}), 200
 
 if __name__ == "__main__":
     init_db()

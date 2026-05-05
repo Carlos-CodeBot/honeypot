@@ -1,0 +1,14 @@
+services:
+  honeypot-log-agent:
+    build: .
+    container_name: honeypot-log-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - honeypot_data:/data
+      - /var/log/nginx/access.log:/logs/access.log:ro
+    command: ["python3", "/app/log_agent.py"]
+
+volumes:
+  honeypot_data:
