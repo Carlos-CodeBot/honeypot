@@ -92,16 +92,6 @@
           <div id="train-stage-meta" class="train-progress-meta">Etapas: subiendo → parseando → entrenando → listo.</div>
         </div>
         <p><small>“Recargar desde disco” relee <code>{{ training_file }}</code> y vuelve a entrenar el modelo sin reiniciar el contenedor.</small></p>
-        <hr>
-        <h4>Personalización de front (ZIP)</h4>
-        <p>Estado front personalizado: <strong id="custom-front-state">{{ 'activo' if custom_front_active else 'inactivo' }}</strong></p>
-        <p>Backup disponible: <strong id="custom-front-backup">{{ 'sí' if custom_front_backup else 'no' }}</strong></p>
-        <p>Sube un ZIP con tus páginas (<code>index.html</code>, <code>contact.html</code>, etc.) y assets. Los assets se sirven desde <code>/custom-assets/...</code>.</p>
-        <form id="theme-upload-form" enctype="multipart/form-data">
-          <input id="theme_zip" type="file" name="theme_zip" accept=".zip" required>
-          <button type="submit">Subir ZIP de front</button>
-          <button type="button" id="restore-theme">Restaurar backup</button>
-        </form>
         <pre id="train-status"></pre>
       </section>
     </section>
@@ -527,44 +517,16 @@ function uploadDataset(event) {
   xhr.send(formData);
 }
 
-async function uploadTheme(event) {
-  event.preventDefault();
-  const input = document.getElementById('theme_zip');
-  if (!input.files.length) return;
 
-  const formData = new FormData();
-  formData.append('theme_zip', input.files[0]);
-  const res = await fetch('/dashboard/upload-theme', { method: 'POST', body: formData });
-  const data = await res.json();
-  setTrainStatus(data);
-  if (typeof data.custom_front_active !== 'undefined') {
-    document.getElementById('custom-front-state').innerText = data.custom_front_active ? 'activo' : 'inactivo';
-  }
-  if (typeof data.custom_front_backup !== 'undefined') {
-    document.getElementById('custom-front-backup').innerText = data.custom_front_backup ? 'sí' : 'no';
-  }
-}
 
-async function restoreTheme() {
-  const res = await fetch('/dashboard/restore-theme', { method: 'POST' });
-  const data = await res.json();
-  setTrainStatus(data);
-  if (typeof data.custom_front_active !== 'undefined') {
-    document.getElementById('custom-front-state').innerText = data.custom_front_active ? 'activo' : 'inactivo';
-  }
-  if (typeof data.custom_front_backup !== 'undefined') {
-    document.getElementById('custom-front-backup').innerText = data.custom_front_backup ? 'sí' : 'no';
-  }
-}
+
 
 function exportWazuh() {
   window.location.href = '/dashboard/export-wazuh';
 }
 
 document.getElementById('upload-form').addEventListener('submit', uploadDataset);
-document.getElementById('theme-upload-form').addEventListener('submit', uploadTheme);
 document.getElementById('reload-model').addEventListener('click', reloadModel);
-document.getElementById('restore-theme').addEventListener('click', restoreTheme);
 document.getElementById('train-candidates').addEventListener('click', trainCandidates);
 document.getElementById('approve-all-candidates').addEventListener('click', approveAllCandidates);
 document.getElementById('create-user-form').addEventListener('submit', createUser);

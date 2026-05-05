@@ -51,6 +51,37 @@ En `.env` puedes ajustar:
 - `FORWARD_LOG_URL` (URL del server dashboard para reenviar eventos)
 - `FORWARD_LOG_TOKEN` (token que envía el server público)
 - `INGEST_TOKEN` (token esperado por `/api/ingest-event`)
+- `INGEST_HMAC_SECRET` (firma HMAC SHA-256 opcional/ recomendada para ingesta)
+- `INGEST_MAX_SKEW_SECONDS` (ventana anti-replay para timestamp)
+
+## Arquitectura Agent/Server (recomendada)
+
+Nuevo modelo para 2 servidores:
+
+- **Agente (server front):** no expone dashboard. Toma líneas de `nginx access.log` y las envía al server SOC.
+- **Server (dashboard):** recibe eventos por `/api/ingest-event`, aplica validaciones de token, timestamp, tamaño y firma HMAC.
+
+Configuración sugerida:
+
+- **Agente/front:**
+  - `ENABLE_PUBLIC_SITE=1`
+  - `ENABLE_DASHBOARD=0`
+  - `FORWARD_LOG_URL=https://dashboard.tu-dominio/api/ingest-event`
+  - `FORWARD_LOG_TOKEN=<token-fuerte>`
+  - `INGEST_HMAC_SECRET=<secreto-largo>`
+- **Server/dashboard:**
+  - `ENABLE_PUBLIC_SITE=0`
+  - `ENABLE_DASHBOARD=1`
+  - `INGEST_TOKEN=<token-fuerte>`
+  - `INGEST_HMAC_SECRET=<secreto-largo>`
+
+### Agente de logs Nginx
+
+Se incluye `app/agent_nginx_forwarder.py` para enviar logs de Nginx al dashboard:
+
+```bash
+python app/agent_nginx_forwarder.py   --log /var/log/nginx/access.log   --url https://dashboard.tu-dominio/api/ingest-event   --token "$INGEST_TOKEN"   --hmac-secret "$INGEST_HMAC_SECRET"
+```
 
 ## Separar sitio vulnerable y dashboard en servidores distintos
 
@@ -95,8 +126,6 @@ docker compose -f docker-compose.prod.yml up -d --build
 - `/dashboard/login` acceso al panel
 - `/dashboard/logout` cerrar sesión
 - `/dashboard/upload-ossec` subida segura de dataset para entrenar
-- `/dashboard/upload-theme` subida de ZIP para personalizar frontend (sin tocar detección)
-- `/dashboard/restore-theme` restaura el front anterior desde backup
 - `/dashboard/api/candidates` lista candidatos de entrenamiento desde tráfico real
 - `/dashboard/approve-candidate` aprueba/etiqueta candidato
 - `/dashboard/reject-candidate` rechaza candidato
@@ -149,8 +178,6 @@ La vista de carga del dashboard aplica:
 - Parseo controlado (sin ejecución de código del archivo).
 
 ## Personalización del frontend por ZIP
-
-Puedes subir un ZIP desde el dashboard para personalizar páginas públicas (`index.html`, `product.html`, `contact.html`, `login.html`, `internal.html`) sin afectar el pipeline de detección del honeypot.
 
 - HTML personalizado se guarda en `CUSTOM_FRONT_DIR/current/templates`.
 - Assets (`.css`, `.js`, imágenes) se guardan en `CUSTOM_FRONT_DIR/current/assets`.

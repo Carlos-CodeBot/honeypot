@@ -1,4 +1,5 @@
 import io
+import hmac
 import ipaddress
 import json
 import os
@@ -11,6 +12,7 @@ import tempfile
 import zipfile
 from datetime import datetime
 from functools import wraps
+from hashlib import sha256
 from urllib import request as urllib_request
 
 from flask import Flask, Response, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
@@ -53,6 +55,8 @@ app.config["ENABLE_DASHBOARD"] = os.getenv("ENABLE_DASHBOARD", "1") == "1"
 app.config["FORWARD_LOG_URL"] = os.getenv("FORWARD_LOG_URL", "").strip()
 app.config["FORWARD_LOG_TOKEN"] = os.getenv("FORWARD_LOG_TOKEN", "").strip()
 app.config["INGEST_TOKEN"] = os.getenv("INGEST_TOKEN", "").strip()
+app.config["INGEST_HMAC_SECRET"] = os.getenv("INGEST_HMAC_SECRET", "").strip()
+app.config["INGEST_MAX_SKEW_SECONDS"] = int(os.getenv("INGEST_MAX_SKEW_SECONDS", "120"))
 
 ALLOWED_UPLOAD_EXTENSIONS = {".txt", ".csv"}
 ALLOWED_THEME_EXTENSIONS = {".html", ".css", ".js", ".png", ".jpg", ".jpeg", ".svg", ".webp", ".gif", ".ico"}
@@ -376,12 +380,21 @@ def forward_event_to_remote(event_payload):
         return
     try:
         data = json.dumps(event_payload).encode("utf-8")
+        timestamp = str(int(datetime.utcnow().timestamp()))
+        signature = ""
+        hmac_secret = app.config.get("INGEST_HMAC_SECRET", "")
+        if hmac_secret:
+            msg = f"{timestamp}.{data.decode('utf-8', errors='ignore')}".encode("utf-8")
+            signature = hmac.new(hmac_secret.encode("utf-8"), msg, sha256).hexdigest()
+
         req = urllib_request.Request(
             target_url,
             data=data,
             headers={
                 "Content-Type": "application/json",
                 "X-Ingest-Token": app.config.get("FORWARD_LOG_TOKEN", ""),
+                "X-Ingest-Timestamp": timestamp,
+                "X-Ingest-Signature": signature,
             },
             method="POST",
         )
@@ -785,8 +798,29 @@ def ingest_remote_event():
     expected = app.config.get("INGEST_TOKEN", "")
     if not expected or token != expected:
         return jsonify({"ok": False, "error": "forbidden"}), 403
+    content_length = request.content_length or 0
+    if content_length <= 0 or content_length > 65536:
+        return jsonify({"ok": False, "error": "invalid_request_size"}), 400
+    timestamp_header = request.headers.get("X-Ingest-Timestamp", "")
+    if not timestamp_header.isdigit():
+        return jsonify({"ok": False, "error": "missing_timestamp"}), 400
+    now_ts = int(datetime.utcnow().timestamp())
+    sent_ts = int(timestamp_header)
+    if abs(now_ts - sent_ts) > app.config["INGEST_MAX_SKEW_SECONDS"]:
+        return jsonify({"ok": False, "error": "timestamp_out_of_window"}), 400
 
     data = request.get_json(silent=True) or {}
+    if app.config.get("INGEST_HMAC_SECRET"):
+        raw_body = request.get_data(as_text=True)
+        expected_sig = hmac.new(
+            app.config["INGEST_HMAC_SECRET"].encode("utf-8"),
+            f"{timestamp_header}.{raw_body}".encode("utf-8"),
+            sha256,
+        ).hexdigest()
+        got_sig = request.headers.get("X-Ingest-Signature", "")
+        if not got_sig or not hmac.compare_digest(got_sig, expected_sig):
+            return jsonify({"ok": False, "error": "invalid_signature"}), 403
+
     required = {"timestamp", "path", "is_attack", "attack_type", "severity", "confidence"}
     if not required.issubset(data.keys()):
         return jsonify({"ok": False, "error": "invalid_payload"}), 400
@@ -830,54 +864,6 @@ def ingest_remote_event():
     return jsonify({"ok": True})
 
 
-@app.route("/dashboard/upload-theme", methods=["POST"])
-@dashboard_auth_required
-def upload_theme_zip():
-    upload = request.files.get("theme_zip")
-    if not upload or not upload.filename:
-        return jsonify({"ok": False, "error": "missing_file"}), 400
-
-    safe_name = secure_filename(upload.filename)
-    if not safe_name.lower().endswith(".zip"):
-        return jsonify({"ok": False, "error": "invalid_extension", "allowed": [".zip"]}), 400
-
-    uploaded_bytes = upload.stream.read()
-    if len(uploaded_bytes) > app.config["MAX_CONTENT_LENGTH"]:
-        return jsonify({"ok": False, "error": "file_too_large", "max_bytes": app.config["MAX_CONTENT_LENGTH"]}), 413
-
-    result = store_theme_zip(uploaded_bytes)
-    status = 200 if result.get("ok") else 400
-    result["filename"] = safe_name
-    result["custom_front_active"] = os.path.exists(custom_front_templates_dir())
-    result["custom_front_backup"] = backup_front_exists()
-    return jsonify(result), status
-
-
-@app.route("/dashboard/restore-theme", methods=["POST"])
-@dashboard_auth_required
-def restore_theme():
-    current_dir = os.path.join(CUSTOM_FRONT_DIR, "current")
-    backup_dir = os.path.join(CUSTOM_FRONT_DIR, "backup")
-    temp_dir = os.path.join(CUSTOM_FRONT_DIR, "restore_tmp")
-
-    if not os.path.exists(backup_dir):
-        return jsonify({"ok": False, "error": "backup_not_found"}), 404
-
-    if os.path.exists(temp_dir):
-        shutil.rmtree(temp_dir, ignore_errors=True)
-    if os.path.exists(current_dir):
-        shutil.move(current_dir, temp_dir)
-    shutil.move(backup_dir, current_dir)
-    if os.path.exists(temp_dir):
-        shutil.move(temp_dir, backup_dir)
-
-    return jsonify(
-        {
-            "ok": True,
-            "custom_front_active": os.path.exists(custom_front_templates_dir()),
-            "custom_front_backup": backup_front_exists(),
-        }
-    )
 
 
 @app.route("/dashboard/api/logs")
