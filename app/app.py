@@ -29,6 +29,12 @@ from ml_engine import (
     parse_uploaded_training,
 )
 
+def env_bool(name, default=False):
+      value = os.getenv(name)
+      if value is None:
+          return default
+      return value.strip().lower() in ("1", "true", "yes", "on")
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.getenv("DB_PATH", "/data/honeypot.db")
 TRAINING_FILE = os.getenv("TRAINING_FILE", "/data/training_samples.txt")
@@ -51,8 +57,8 @@ app.config["HERO_TAGLINE"] = os.getenv("HERO_TAGLINE", "Plataforma integral de f
 app.config["ADMIN_USER"] = os.getenv("ADMIN_USER")
 app.config["ADMIN_PASS"] = os.getenv("ADMIN_PASS")
 app.config["SIEM_HINT"] = os.getenv("SIEM_HINT", "crowdsec")
-app.config["ENABLE_PUBLIC_SITE"] = os.getenv("ENABLE_PUBLIC_SITE", "1") == "1"
-app.config["ENABLE_DASHBOARD"] = os.getenv("ENABLE_DASHBOARD", "1") == "1"
+app.config["ENABLE_PUBLIC_SITE"] = env_bool("ENABLE_PUBLIC_SITE", True)
+app.config["ENABLE_DASHBOARD"] = env_bool("ENABLE_DASHBOARD", True)
 app.config["FORWARD_LOG_URL"] = os.getenv("FORWARD_LOG_URL", "").strip()
 app.config["FORWARD_LOG_TOKEN"] = os.getenv("FORWARD_LOG_TOKEN", "").strip()
 app.config["INGEST_TOKEN"] = os.getenv("INGEST_TOKEN", "").strip()
@@ -333,12 +339,19 @@ def init_db():
         )
     db.commit()
     db.close()
-
-    adaptive_model.load_persisted()
-    if not adaptive_model.loaded and os.path.exists(TRAINING_FILE):
-        with open(TRAINING_FILE, "r", encoding="utf-8", errors="ignore") as file_obj:
-            samples = parse_uploaded_training(file_obj.read(), TRAINING_FILE)
-        adaptive_model.train_from_samples(samples)
+try:
+    with app.app_context():
+        init_db()
+    app.logger.info("Base de datos inicializada correctamente en %s", DB_PATH)
+except Exception as exc:
+    app.logger.exception("Error inicializando la base de datos: %s", exc)
+    raise
+   
+adaptive_model.load_persisted()
+if not adaptive_model.loaded and os.path.exists(TRAINING_FILE):
+    with open(TRAINING_FILE, "r", encoding="utf-8", errors="ignore") as file_obj:
+        samples = parse_uploaded_training(file_obj.read(), TRAINING_FILE)
+    adaptive_model.train_from_samples(samples)
 
 
 def log_event(classification):
@@ -384,33 +397,52 @@ def log_event(classification):
 
 
 def forward_event_to_remote(event_payload):
-    target_url = app.config.get("FORWARD_LOG_URL")
-    if not target_url:
-        return
-    try:
-        data = json.dumps(event_payload).encode("utf-8")
-        timestamp = str(int(datetime.utcnow().timestamp()))
-        signature = ""
-        hmac_secret = app.config.get("INGEST_HMAC_SECRET", "")
-        if hmac_secret:
-            msg = f"{timestamp}.{data.decode('utf-8', errors='ignore')}".encode("utf-8")
-            signature = hmac.new(hmac_secret.encode("utf-8"), msg, sha256).hexdigest()
+      target_url = app.config.get("FORWARD_LOG_URL")
+      if not target_url:
+          return
 
-        req = urllib_request.Request(
-            target_url,
-            data=data,
-            headers={
-                "Content-Type": "application/json",
-                "X-Ingest-Token": app.config.get("FORWARD_LOG_TOKEN", ""),
-                "X-Ingest-Timestamp": timestamp,
-                "X-Ingest-Signature": signature,
-            },
-            method="POST",
-        )
-        with urllib_request.urlopen(req, timeout=2):
-            return
-    except Exception:
-        return
+      try:
+          data = json.dumps(
+              event_payload,
+              separators=(",", ":"),
+              ensure_ascii=False,
+          ).encode("utf-8")
+
+          timestamp = str(int(datetime.utcnow().timestamp()))
+
+          headers = {
+              "Content-Type": "application/json",
+              "X-Ingest-Token": app.config.get("FORWARD_LOG_TOKEN", ""),
+              "X-Ingest-Timestamp": timestamp,
+          }
+
+          hmac_secret = app.config.get("INGEST_HMAC_SECRET", "")
+          if hmac_secret:
+              msg = timestamp.encode("utf-8") + b"." + data
+              signature = hmac.new(
+                  hmac_secret.encode("utf-8"),
+                  msg,
+                  sha256,
+              ).hexdigest()
+              headers["X-Ingest-Signature"] = signature
+
+          req = urllib_request.Request(
+              target_url,
+              data=data,
+              headers=headers,
+              method="POST",
+          )
+
+          with urllib_request.urlopen(req, timeout=5) as response:
+              response_body = response.read().decode("utf-8", errors="ignore")
+              app.logger.info(
+                  "forward_event_to_remote_ok status=%s body=%s",
+                  getattr(response, "status", "unknown"),
+                  response_body[:300],
+              )
+
+      except Exception as exc:
+          app.logger.exception("forward_event_to_remote_failed: %s", exc)
 
 
 def increment_total_model_samples(samples_count):
@@ -519,8 +551,12 @@ def global_logger():
             "body": decode_payload(request.get_data(as_text=True)),
             "ua": decode_payload(request.headers.get("User-Agent", "")),
         }
-        classification = detect_attack(features, adaptive_model)
-        log_event(classification)
+    try:
+      classification = detect_attack(features, adaptive_model)
+      log_event(classification)
+    except Exception as exc:
+      app.logger.exception("global_logger_failed: %s", exc)
+
 
 
 @app.before_request
@@ -530,7 +566,7 @@ def route_mode_guard():
             return jsonify({"ok": False, "error": "dashboard_disabled"}), 404
         return None
 
-    public_exceptions = ("/static/", "/custom-assets/", "/api/ingest-event")
+    public_exceptions = ("/static/", "/custom-assets/", "/api/health",  "/api/ingest-event")
     if request.path.startswith(public_exceptions):
         return None
 
