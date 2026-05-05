@@ -1,158 +1,503 @@
-Guía de instalación completa (Dashboard + Agente Nginx)
-=====================================================
+Guía de instalación completa - Honeypot / Dashboard / Agente de logs
+====================================================================
 
 Objetivo
 --------
-Desplegar la herramienta en arquitectura separada:
-1) Servidor Dashboard (SOC + API de ingesta + entrenamiento)
-2) Servidor Agente (frontend/honeypot + reenvío de logs nginx)
+Esta guía explica cómo desplegar la herramienta en tres modos diferentes:
+
+1) Dashboard central
+   - Recibe eventos remotos en /api/ingest-event.
+   - Muestra el panel de análisis.
+   - Guarda eventos, estadísticas y datos de entrenamiento.
+
+2) Honeypot público tradicional
+   - Publica el sitio señuelo propio de la herramienta.
+   - Registra las peticiones que llegan a ese sitio.
+   - Reenvía eventos al dashboard central.
+
+3) Agente lector de logs
+   - No publica sitio falso.
+   - No usa los puertos 80/443.
+   - Lee access logs del servidor web real del cliente.
+   - Envía eventos al dashboard central.
 
 Requisitos mínimos
 ------------------
-- Linux x86_64 (Ubuntu 22.04+ recomendado)
-- Docker y Docker Compose v2
-- Puertos:
-  - Dashboard: 8000 (o detrás de Nginx 443)
-  - Agente: salida HTTPS hacia endpoint /api/ingest-event del dashboard
-- Reloj del sistema sincronizado (NTP) en ambos servidores
+- Linux x86_64.
+- Docker y Docker Compose v2.
+- Reloj sincronizado con NTP en dashboard y agentes.
+- Conectividad desde los agentes hacia el dashboard.
+- Token y secreto HMAC compartidos entre dashboard y agentes.
+
+Puertos habituales
+------------------
+- Dashboard con docker compose normal:
+  8000/tcp
+
+- Dashboard con docker-compose.prod.yml y Nginx:
+  80/tcp o 443/tcp, según el reverse proxy.
+
+- Honeypot público tradicional:
+  80/tcp o el puerto que publiques.
+
+- Agente lector de logs:
+  No necesita puerto de entrada. Solo salida HTTP/HTTPS hacia el dashboard.
+
+Variables importantes
+---------------------
+- INGEST_TOKEN:
+  Token que configura el dashboard para aceptar eventos remotos.
+
+- FORWARD_LOG_TOKEN:
+  Token que usa el agente para enviar eventos.
+  Debe ser igual a INGEST_TOKEN.
+
+- INGEST_HMAC_SECRET:
+  Secreto compartido para firmar eventos con HMAC.
+  Debe ser igual en dashboard y agentes.
+
+- FORWARD_LOG_URL:
+  URL del endpoint de ingesta del dashboard.
+  Ejemplos:
+    http://IP_DEL_DASHBOARD/api/ingest-event
+    http://IP_DEL_DASHBOARD:8000/api/ingest-event
+    https://dashboard.midominio.com/api/ingest-event
 
 -----------------------------------------------------
-A) INSTALACIÓN DEL SERVIDOR DASHBOARD
+A) INSTALACIÓN DEL SERVIDOR DASHBOARD CENTRAL
 -----------------------------------------------------
 
 1. Clonar repositorio
+
    git clone <URL_DEL_REPO>
    cd honeypot
 
 2. Crear archivo de entorno
+
    cp .env.example .env
 
-3. Editar .env (valores obligatorios para modo dashboard)
+3. Editar .env para modo dashboard
+
    ENABLE_PUBLIC_SITE=0
    ENABLE_DASHBOARD=1
+   ENABLE_LOG_AGENT=0
 
-   # credenciales panel
    ADMIN_USER=admin
    ADMIN_PASS=<contraseña_larga_y_unica>
 
-   # seguridad ingesta
    INGEST_TOKEN=<token_largo_aleatorio>
    INGEST_HMAC_SECRET=<secreto_hmac_largo_aleatorio>
    INGEST_MAX_SKEW_SECONDS=120
 
-   # cookies y secreto app
    SECRET_KEY=<secret_key_largo>
    SESSION_COOKIE_SECURE=1
    SESSION_COOKIE_SAMESITE=Lax
 
-4. Levantar servicio (entorno simple)
+4. Levantar dashboard en modo simple
+
    docker compose up -d --build
 
-   (o producción con reverse proxy)
+5. O levantar dashboard con reverse proxy de producción
+
    docker compose -f docker-compose.prod.yml up -d --build
 
-5. Validar funcionamiento
-   - Salud API:
-     curl -s http://127.0.0.1:8000/api/health
-   - Login panel:
-     http://<IP_O_DOMINIO_DASHBOARD>:8000/dashboard/login
+6. Validar variables dentro del contenedor
 
-6. Recomendaciones de hardening (muy importante)
-   - Exponer dashboard solo por HTTPS
-   - Restringir acceso por firewall (IP allowlist / VPN)
-   - Rotar ADMIN_PASS, INGEST_TOKEN e INGEST_HMAC_SECRET periódicamente
-   - Hacer backup de /data (DB y modelo)
+   docker compose exec honeypot-web sh -lc \
+   'printenv | grep -E "ENABLE_PUBLIC_SITE|ENABLE_DASHBOARD|INGEST_TOKEN|INGEST_HMAC_SECRET|INGEST_MAX_SKEW_SECONDS"'
+
+7. Validar salud
+
+   Si usas compose normal:
+
+     curl -i http://127.0.0.1:8000/api/health
+
+   Si usas Nginx/reverse proxy:
+
+     curl -i http://127.0.0.1/api/health
+
+8. Acceder al dashboard
+
+   http://IP_DEL_DASHBOARD:8000/dashboard/login
+
+   o, si usas Nginx/reverse proxy:
+
+   http://IP_DEL_DASHBOARD/dashboard/login
+   https://DOMINIO_DASHBOARD/dashboard/login
+
+9. Recomendaciones de seguridad
+
+   - Usar HTTPS en producción.
+   - Restringir acceso al dashboard por firewall, VPN o allowlist.
+   - Cambiar ADMIN_PASS, SECRET_KEY, INGEST_TOKEN e INGEST_HMAC_SECRET.
+   - Rotar secretos periódicamente.
+   - Hacer backup de /data.
+   - Mantener NTP activo en dashboard y agentes.
 
 -----------------------------------------------------
-B) INSTALACIÓN DEL SERVIDOR AGENTE (NGINX DEL CLIENTE)
+B) INSTALACIÓN DE HONEYPOT PÚBLICO TRADICIONAL
 -----------------------------------------------------
+
+Este modo publica el sitio señuelo de la herramienta y reenvía eventos al dashboard.
+Úsalo cuando quieras que el servidor sea un honeypot completo.
 
 1. Clonar repositorio
+
    git clone <URL_DEL_REPO>
    cd honeypot
 
-2. Crear archivo de entorno
+2. Crear .env
+
    cp .env.example .env
 
-3. Nota importante de arquitectura
-   - En modo agente NO necesitas montar la web de honeypot.
-   - El agente se instala en el server Nginx real del cliente.
-   - Solo reenvía logs HTTP al dashboard/honeypotserver para análisis centralizado.
+3. Editar .env para modo honeypot público
 
-4. Variables que debes usar en el agente (mismos secretos del dashboard)
-   FORWARD_LOG_URL=https://<DOMINIO_DASHBOARD>/api/ingest-event
-   FORWARD_LOG_TOKEN=<mismo_token_INGEST_TOKEN_del_dashboard>
-   INGEST_HMAC_SECRET=<mismo_secreto_hmac_del_dashboard>
+   ENABLE_PUBLIC_SITE=1
+   ENABLE_DASHBOARD=0
+   ENABLE_LOG_AGENT=0
 
-5. Ejecutar agente de logs (recomendado con systemd, ver sección C)
+   FORWARD_LOG_URL=http://IP_DEL_DASHBOARD/api/ingest-event
+   FORWARD_LOG_TOKEN=<mismo_valor_que_INGEST_TOKEN_del_dashboard>
+   INGEST_HMAC_SECRET=<mismo_valor_que_INGEST_HMAC_SECRET_del_dashboard>
 
------------------------------------------------------
-C) AGENTE DESDE LOGS NGINX (opcional/recomendado)
------------------------------------------------------
+4. Si el dashboard usa Flask/Gunicorn directo en 8000
 
-Este modo usa el script:
-  app/agent_nginx_forwarder.py
+   FORWARD_LOG_URL=http://IP_DEL_DASHBOARD:8000/api/ingest-event
 
-1. Requisitos
-   - Python 3.10+
-   - Acceso de lectura al archivo access.log de nginx
+5. Levantar honeypot
 
-2. Ejecución manual
-   python app/agent_nginx_forwarder.py \
-     --log /var/log/nginx/access.log \
-     --url https://<DOMINIO_DASHBOARD>/api/ingest-event \
-     --token "<INGEST_TOKEN>" \
-     --hmac-secret "<INGEST_HMAC_SECRET>"
+   docker compose up -d --build
 
-3. Crear servicio systemd (recomendado)
-   Archivo: /etc/systemd/system/honeypot-nginx-agent.service
+6. Validar variables
 
-   [Unit]
-   Description=Honeypot Nginx Forwarder Agent
-   After=network-online.target
+   docker compose exec honeypot-web sh -lc \
+   'printenv | grep -E "ENABLE_PUBLIC_SITE|ENABLE_DASHBOARD|FORWARD_LOG_URL|FORWARD_LOG_TOKEN|INGEST_HMAC_SECRET"'
 
-   [Service]
-   Type=simple
-   User=www-data
-   WorkingDirectory=/opt/honeypot
-   ExecStart=/usr/bin/python3 /opt/honeypot/app/agent_nginx_forwarder.py --log /var/log/nginx/access.log --url https://<DOMINIO_DASHBOARD>/api/ingest-event --token <INGEST_TOKEN> --hmac-secret <INGEST_HMAC_SECRET>
-   Restart=always
-   RestartSec=3
+7. Generar tráfico de prueba contra el honeypot
 
-   [Install]
-   WantedBy=multi-user.target
+   curl -i http://127.0.0.1/wp-admin
+   curl -i http://127.0.0.1/.env
+   curl -i "http://127.0.0.1/search?q=1%27%20OR%201=1"
 
-   Activar:
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now honeypot-nginx-agent
-   sudo systemctl status honeypot-nginx-agent
+8. Ver logs
+
+   docker compose logs --tail=120 honeypot-web
+
+9. Confirmar eventos en el dashboard
+
+   Entrar al dashboard y revisar la tabla de eventos.
 
 -----------------------------------------------------
-D) PRUEBAS DE INTEGRACIÓN
+C) INSTALACIÓN DEL AGENTE LECTOR DE LOGS
 -----------------------------------------------------
 
-1. Generar tráfico de prueba en agente
-   curl "http://<HOST_AGENTE>/search?q=<script>alert(1)</script>"
+Este modo es recomendado cuando el cliente ya tiene un sitio real funcionando en 80/443 y no quieres reemplazarlo.
 
-2. Verificar en dashboard
-   - Entrar a /dashboard
-   - Revisar tabla de eventos y gráficas
+El agente lector de logs:
+- No levanta sitio web falso.
+- No ocupa puertos 80/443.
+- Lee access.log de Nginx/Apache.
+- Clasifica peticiones básicas desde URL, query string, referer y user-agent.
+- Envía eventos firmados al dashboard central.
 
-3. Validar ingesta segura y clasificación remota
-   - Si token/HMAC no coinciden, el dashboard debe responder 403
-   - Si timestamp está fuera de ventana, debe responder 400
-   - El dashboard debe clasificar los eventos recibidos (no confiar en clasificación del agente)
+Limitación importante:
+Los access logs normalmente no incluyen body POST ni headers completos.
+Para inspección profunda de body/headers se necesita reverse proxy, mirror o integración con el servidor web.
+
+1. Clonar repositorio
+
+   git clone <URL_DEL_REPO>
+   cd honeypot
+
+2. Crear .env
+
+   cp .env.example .env
+
+3. Editar .env para modo log-agent
+
+   ENABLE_PUBLIC_SITE=0
+   ENABLE_DASHBOARD=0
+   ENABLE_LOG_AGENT=1
+
+   LOG_AGENT_PATH=/logs/access.log
+   LOG_AGENT_STATE_FILE=/data/log_agent.state
+   LOG_AGENT_POLL_INTERVAL=2
+   LOG_AGENT_SEND_ONLY_ATTACKS=0
+
+   FORWARD_LOG_URL=http://IP_DEL_DASHBOARD/api/ingest-event
+   FORWARD_LOG_TOKEN=<mismo_valor_que_INGEST_TOKEN_del_dashboard>
+   INGEST_HMAC_SECRET=<mismo_valor_que_INGEST_HMAC_SECRET_del_dashboard>
+
+4. Encontrar la ruta real del access log en el servidor cliente
+
+   Para Nginx en host:
+
+     sudo nginx -T 2>/dev/null | grep -n "access_log"
+     sudo find /var/log -type f \( -name "access.log" -o -name "*access*.log" \) 2>/dev/null
+
+   Rutas comunes de Nginx:
+
+     /var/log/nginx/access.log
+     /var/log/nginx/domains/<sitio>.access.log
+
+   Para Apache Debian/Ubuntu:
+
+     sudo grep -Rni "CustomLog" /etc/apache2 2>/dev/null
+     /var/log/apache2/access.log
+
+   Para Apache CentOS/RHEL:
+
+     sudo grep -Rni "CustomLog" /etc/httpd 2>/dev/null
+     /var/log/httpd/access_log
+
+5. Confirmar que el log recibe tráfico
+
+   tail -f /ruta/real/access.log
+
+   En otra terminal:
+
+   curl -k https://DOMINIO_DEL_CLIENTE/.env
+
+   Si aparece la petición en el tail, esa es la ruta correcta.
+
+6. Configurar docker-compose.log-agent.yml
+
+   Para Nginx en host con log en /var/log/nginx/access.log:
+
+   services:
+     honeypot-log-agent:
+       build: .
+       container_name: honeypot-log-agent
+       restart: unless-stopped
+       env_file:
+         - .env
+       volumes:
+         - honeypot_data:/data
+         - /var/log/nginx/access.log:/logs/access.log:ro
+       command: ["python3", "/app/log_agent.py"]
+
+   volumes:
+     honeypot_data:
+
+   Para Apache Debian/Ubuntu, cambiar el volumen a:
+
+     - /var/log/apache2/access.log:/logs/access.log:ro
+
+   Para Apache CentOS/RHEL, cambiar el volumen a:
+
+     - /var/log/httpd/access_log:/logs/access.log:ro
+
+7. Levantar agente lector de logs
+
+   docker compose -f docker-compose.log-agent.yml up -d --build
+
+8. Ver logs del agente
+
+   docker compose -f docker-compose.log-agent.yml logs -f honeypot-log-agent
+
+9. Generar tráfico de prueba contra el sitio real
+
+   curl -k "https://DOMINIO_DEL_CLIENTE/wp-admin"
+   curl -k "https://DOMINIO_DEL_CLIENTE/.env"
+   curl -k "https://DOMINIO_DEL_CLIENTE/search?q=1%27%20OR%201=1"
+
+10. Confirmar que el agente envía al dashboard
+
+   docker compose -f docker-compose.log-agent.yml logs --tail=100 honeypot-log-agent
+
+   Debes ver algo similar a:
+
+     enviado status=200 path=/wp-admin body={"ok":true}
 
 -----------------------------------------------------
-E) CHECKLIST FINAL DE OPERACIÓN
+D) CASO ESPECIAL: LOGS DENTRO DE UN CONTENEDOR PODMAN/DOCKER
 -----------------------------------------------------
 
-[ ] Dashboard en servidor separado del front
-[ ] HTTPS activo en dashboard
-[ ] Firewall/VPN aplicado al dashboard
-[ ] Tokens y secretos fuertes configurados
-[ ] NTP sincronizado en ambos servidores
-[ ] Backup automático de /data
-[ ] Monitoreo de contenedores y logs activo
+Si el Nginx del cliente corre dentro de un contenedor, puede que no exista /var/log/nginx/access.log en el host.
+En ese caso, primero identifica el contenedor.
+
+1. Ver contenedores
+
+   docker ps -a
+   podman ps -a
+
+   Si el contenedor corre con Podman rootless de otro usuario:
+
+   sudo -u <usuario> podman ps -a
+
+2. Ver el log dentro del contenedor
+
+   sudo -u <usuario> podman exec <contenedor_nginx> sh -lc \
+   'ls -lah /var/log/nginx && tail -n 20 /var/log/nginx/access.log'
+
+3. Solución recomendada para producción
+
+   Modificar el compose/arranque del Nginx del cliente para montar logs en el host:
+
+   volumes:
+     - /ruta/host/nginx-logs:/var/log/nginx:Z
+
+   Ejemplo:
+
+   volumes:
+     - /home/honeypot/honeypot/nginx-logs:/var/log/nginx:Z
+
+4. Confirmar que el host recibe logs en caliente
+
+   curl -i http://127.0.0.1:8080/test-log-host
+   tail -n 20 /home/honeypot/honeypot/nginx-logs/access.log
+
+5. Montar ese log en docker-compose.log-agent.yml
+
+   volumes:
+     - honeypot_data:/data
+     - /home/honeypot/honeypot/nginx-logs/access.log:/logs/access.log:ro
+
+6. En .env mantener:
+
+   LOG_AGENT_PATH=/logs/access.log
+
+Nota:
+No se recomienda montar rutas internas tipo overlay/merged de Podman/Docker. Pueden cambiar al recrear el contenedor y son frágiles.
+
+-----------------------------------------------------
+E) PRUEBA MANUAL DE INGESTA
+-----------------------------------------------------
+
+Antes de culpar al agente, valida que el dashboard acepta eventos.
+
+1. Crear script de prueba si existe scripts/test_ingest.sh
+
+   ./scripts/test_ingest.sh \
+     "http://IP_DEL_DASHBOARD/api/ingest-event" \
+     "<INGEST_TOKEN>" \
+     "<INGEST_HMAC_SECRET>"
+
+2. Respuesta esperada
+
+   HTTP/1.1 200 OK
+   {"ok":true}
+
+3. Errores comunes
+
+   403 forbidden:
+     Token incorrecto.
+
+   403 invalid_signature:
+     HMAC incorrecto o body firmado distinto al body enviado.
+
+   400 invalid_payload:
+     JSON inválido o campos mínimos faltantes.
+
+   400 stale_timestamp:
+     Reloj desincronizado o INGEST_MAX_SKEW_SECONDS muy bajo.
+
+-----------------------------------------------------
+F) CONSULTAR EVENTOS EN SQLITE SIN sqlite3
+-----------------------------------------------------
+
+Algunas imágenes no traen el binario sqlite3. Puedes consultar con Python.
+
+En el dashboard:
+
+   docker compose exec honeypot-web sh -lc '
+   python3 - <<PY
+import sqlite3
+conn = sqlite3.connect("/data/honeypot.db")
+cur = conn.cursor()
+cur.execute("""
+SELECT id,timestamp,ip,path,attack_type,severity,confidence,notes
+FROM attack_logs
+ORDER BY id DESC
+LIMIT 20;
+""")
+for row in cur.fetchall():
+    print(row)
+conn.close()
+PY
+   '
+
+-----------------------------------------------------
+G) TROUBLESHOOTING
+-----------------------------------------------------
+
+1. Ver variables dentro del contenedor principal
+
+   docker compose exec honeypot-web sh -lc \
+   'printenv | grep -E "ENABLE_PUBLIC_SITE|ENABLE_DASHBOARD|FORWARD_LOG_URL|FORWARD_LOG_TOKEN|INGEST_TOKEN|INGEST_HMAC_SECRET"'
+
+2. Ver variables dentro del log-agent
+
+   docker compose -f docker-compose.log-agent.yml exec honeypot-log-agent sh -lc \
+   'printenv | grep -E "LOG_AGENT|FORWARD_LOG_URL|FORWARD_LOG_TOKEN|INGEST_HMAC_SECRET"'
+
+3. Ver logs del dashboard o honeypot
+
+   docker compose logs -f honeypot-web
+
+4. Ver logs del agente lector de logs
+
+   docker compose -f docker-compose.log-agent.yml logs -f honeypot-log-agent
+
+5. Error: no such table: attack_logs
+
+   Causa:
+     La base no fue inicializada.
+
+   Solución:
+     Asegurar que app.py ejecuta init_db() al arrancar.
+     Recrear contenedor:
+
+       docker compose down
+       docker compose up -d --build --force-recreate
+
+6. El dashboard no muestra eventos, pero el test manual sí funciona
+
+   Revisar:
+   - El agente realmente está leyendo el log correcto.
+   - LOG_AGENT_PATH apunta a /logs/access.log dentro del contenedor.
+   - El volumen del compose monta el access.log real hacia /logs/access.log.
+   - LOG_AGENT_SEND_ONLY_ATTACKS no está filtrando demasiado.
+
+7. El agente no ve cambios nuevos del log
+
+   Revisar:
+   - tail -f del archivo real en el host.
+   - Permisos de lectura.
+   - Rotación de logs.
+   - Que el servidor web escriba access_log.
+
+-----------------------------------------------------
+H) CHECKLIST FINAL
+-----------------------------------------------------
+
+Dashboard central:
+[ ] ENABLE_PUBLIC_SITE=0
+[ ] ENABLE_DASHBOARD=1
+[ ] INGEST_TOKEN configurado
+[ ] INGEST_HMAC_SECRET configurado
+[ ] Dashboard accesible por HTTPS o red protegida
+[ ] Backup de /data configurado
+[ ] NTP activo
+
+Honeypot público:
+[ ] ENABLE_PUBLIC_SITE=1
+[ ] ENABLE_DASHBOARD=0
+[ ] FORWARD_LOG_URL apunta a /api/ingest-event del dashboard
+[ ] FORWARD_LOG_TOKEN coincide con INGEST_TOKEN
+[ ] INGEST_HMAC_SECRET coincide con dashboard
+[ ] Eventos aparecen en dashboard
+
+Agente lector de logs:
+[ ] ENABLE_PUBLIC_SITE=0
+[ ] ENABLE_DASHBOARD=0
+[ ] ENABLE_LOG_AGENT=1
+[ ] LOG_AGENT_PATH=/logs/access.log
+[ ] access.log real montado como /logs/access.log:ro
+[ ] FORWARD_LOG_URL configurado
+[ ] FORWARD_LOG_TOKEN coincide con INGEST_TOKEN
+[ ] INGEST_HMAC_SECRET coincide con dashboard
+[ ] Logs del agente muestran status=200
+[ ] Eventos aparecen en dashboard
 
 Fin.
