@@ -1,0 +1,158 @@
+Guía de instalación completa (Dashboard + Agente Nginx)
+=====================================================
+
+Objetivo
+--------
+Desplegar la herramienta en arquitectura separada:
+1) Servidor Dashboard (SOC + API de ingesta + entrenamiento)
+2) Servidor Agente (frontend/honeypot + reenvío de logs nginx)
+
+Requisitos mínimos
+------------------
+- Linux x86_64 (Ubuntu 22.04+ recomendado)
+- Docker y Docker Compose v2
+- Puertos:
+  - Dashboard: 8000 (o detrás de Nginx 443)
+  - Agente: salida HTTPS hacia endpoint /api/ingest-event del dashboard
+- Reloj del sistema sincronizado (NTP) en ambos servidores
+
+-----------------------------------------------------
+A) INSTALACIÓN DEL SERVIDOR DASHBOARD
+-----------------------------------------------------
+
+1. Clonar repositorio
+   git clone <URL_DEL_REPO>
+   cd honeypot
+
+2. Crear archivo de entorno
+   cp .env.example .env
+
+3. Editar .env (valores obligatorios para modo dashboard)
+   ENABLE_PUBLIC_SITE=0
+   ENABLE_DASHBOARD=1
+
+   # credenciales panel
+   ADMIN_USER=admin
+   ADMIN_PASS=<contraseña_larga_y_unica>
+
+   # seguridad ingesta
+   INGEST_TOKEN=<token_largo_aleatorio>
+   INGEST_HMAC_SECRET=<secreto_hmac_largo_aleatorio>
+   INGEST_MAX_SKEW_SECONDS=120
+
+   # cookies y secreto app
+   SECRET_KEY=<secret_key_largo>
+   SESSION_COOKIE_SECURE=1
+   SESSION_COOKIE_SAMESITE=Lax
+
+4. Levantar servicio (entorno simple)
+   docker compose up -d --build
+
+   (o producción con reverse proxy)
+   docker compose -f docker-compose.prod.yml up -d --build
+
+5. Validar funcionamiento
+   - Salud API:
+     curl -s http://127.0.0.1:8000/api/health
+   - Login panel:
+     http://<IP_O_DOMINIO_DASHBOARD>:8000/dashboard/login
+
+6. Recomendaciones de hardening (muy importante)
+   - Exponer dashboard solo por HTTPS
+   - Restringir acceso por firewall (IP allowlist / VPN)
+   - Rotar ADMIN_PASS, INGEST_TOKEN e INGEST_HMAC_SECRET periódicamente
+   - Hacer backup de /data (DB y modelo)
+
+-----------------------------------------------------
+B) INSTALACIÓN DEL SERVIDOR AGENTE (NGINX DEL CLIENTE)
+-----------------------------------------------------
+
+1. Clonar repositorio
+   git clone <URL_DEL_REPO>
+   cd honeypot
+
+2. Crear archivo de entorno
+   cp .env.example .env
+
+3. Nota importante de arquitectura
+   - En modo agente NO necesitas montar la web de honeypot.
+   - El agente se instala en el server Nginx real del cliente.
+   - Solo reenvía logs HTTP al dashboard/honeypotserver para análisis centralizado.
+
+4. Variables que debes usar en el agente (mismos secretos del dashboard)
+   FORWARD_LOG_URL=https://<DOMINIO_DASHBOARD>/api/ingest-event
+   FORWARD_LOG_TOKEN=<mismo_token_INGEST_TOKEN_del_dashboard>
+   INGEST_HMAC_SECRET=<mismo_secreto_hmac_del_dashboard>
+
+5. Ejecutar agente de logs (recomendado con systemd, ver sección C)
+
+-----------------------------------------------------
+C) AGENTE DESDE LOGS NGINX (opcional/recomendado)
+-----------------------------------------------------
+
+Este modo usa el script:
+  app/agent_nginx_forwarder.py
+
+1. Requisitos
+   - Python 3.10+
+   - Acceso de lectura al archivo access.log de nginx
+
+2. Ejecución manual
+   python app/agent_nginx_forwarder.py \
+     --log /var/log/nginx/access.log \
+     --url https://<DOMINIO_DASHBOARD>/api/ingest-event \
+     --token "<INGEST_TOKEN>" \
+     --hmac-secret "<INGEST_HMAC_SECRET>"
+
+3. Crear servicio systemd (recomendado)
+   Archivo: /etc/systemd/system/honeypot-nginx-agent.service
+
+   [Unit]
+   Description=Honeypot Nginx Forwarder Agent
+   After=network-online.target
+
+   [Service]
+   Type=simple
+   User=www-data
+   WorkingDirectory=/opt/honeypot
+   ExecStart=/usr/bin/python3 /opt/honeypot/app/agent_nginx_forwarder.py --log /var/log/nginx/access.log --url https://<DOMINIO_DASHBOARD>/api/ingest-event --token <INGEST_TOKEN> --hmac-secret <INGEST_HMAC_SECRET>
+   Restart=always
+   RestartSec=3
+
+   [Install]
+   WantedBy=multi-user.target
+
+   Activar:
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now honeypot-nginx-agent
+   sudo systemctl status honeypot-nginx-agent
+
+-----------------------------------------------------
+D) PRUEBAS DE INTEGRACIÓN
+-----------------------------------------------------
+
+1. Generar tráfico de prueba en agente
+   curl "http://<HOST_AGENTE>/search?q=<script>alert(1)</script>"
+
+2. Verificar en dashboard
+   - Entrar a /dashboard
+   - Revisar tabla de eventos y gráficas
+
+3. Validar ingesta segura y clasificación remota
+   - Si token/HMAC no coinciden, el dashboard debe responder 403
+   - Si timestamp está fuera de ventana, debe responder 400
+   - El dashboard debe clasificar los eventos recibidos (no confiar en clasificación del agente)
+
+-----------------------------------------------------
+E) CHECKLIST FINAL DE OPERACIÓN
+-----------------------------------------------------
+
+[ ] Dashboard en servidor separado del front
+[ ] HTTPS activo en dashboard
+[ ] Firewall/VPN aplicado al dashboard
+[ ] Tokens y secretos fuertes configurados
+[ ] NTP sincronizado en ambos servidores
+[ ] Backup automático de /data
+[ ] Monitoreo de contenedores y logs activo
+
+Fin.
