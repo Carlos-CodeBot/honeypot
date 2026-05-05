@@ -1,0 +1,38 @@
+version: '3.8'
+services:
+  honeypot-web:
+    build: .
+    container_name: honeypot-web
+    environment:
+      - SECRET_KEY=${SECRET_KEY:-change-this-secret}
+      - SESSION_COOKIE_SECURE=1
+      - SESSION_COOKIE_SAMESITE=Lax
+      - SITE_TITLE=${SITE_TITLE:-Portal Empresarial}
+      - SITE_SUBTITLE=${SITE_SUBTITLE:-Área segura para clientes}
+      - HERO_TAGLINE=${HERO_TAGLINE:-Plataforma integral para operaciones y finanzas}
+      - THEME_COLOR=${THEME_COLOR:-#1e3a8a}
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASS=${ADMIN_PASS:-admin123}
+      - SIEM_HINT=${SIEM_HINT:-crowdsec}
+      - DB_PATH=/data/honeypot.db
+      - TRAINING_FILE=${TRAINING_FILE:-/data/training_samples.txt}
+      - MODEL_PATH=${MODEL_PATH:-/data/adaptive_model.joblib}
+    volumes:
+      - honeypot-data:/data
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: honeypot-nginx
+    depends_on:
+      - honeypot-web
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+
+volumes:
+  honeypot-data:

@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="es">
+<head><meta charset="utf-8"><title>Intranet</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
+<body>
+  <main class="card">
+    <h2>Panel interno universitario</h2>
+    <p>Bienvenido {{ user }}. Esta área simula información sensible de gestión académica.</p>
+    <ul>
+      <li>Registros activos: 18,420</li>
+      <li>Pagos de matrícula procesados: 12,790</li>
+      <li>Backup endpoint: /backup/academic.sql (honeypot)</li>
+    </ul>
+  </main>
+</body>
+</html>
