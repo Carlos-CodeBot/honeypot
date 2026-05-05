@@ -830,9 +830,17 @@ def ingest_remote_event():
         if not got_sig or not hmac.compare_digest(got_sig, expected_sig):
             return jsonify({"ok": False, "error": "invalid_signature"}), 403
 
-    required = {"timestamp", "path", "is_attack", "attack_type", "severity", "confidence"}
+    required = {"timestamp", "path"}
     if not required.issubset(data.keys()):
         return jsonify({"ok": False, "error": "invalid_payload"}), 400
+
+    features = {
+        "path": decode_payload(data.get("path", "")),
+        "query": decode_payload(data.get("query_string", "")),
+        "body": decode_payload(data.get("body", "")),
+        "ua": decode_payload(data.get("user_agent", "")),
+    }
+    classification = detect_attack(features, adaptive_model)
 
     db = get_db()
     cursor = db.execute(
@@ -852,15 +860,19 @@ def ingest_remote_event():
             data.get("query_string"),
             data.get("body"),
             data.get("headers"),
-            data.get("notes", ""),
-            data.get("is_attack", 0),
-            data.get("attack_type", "benign"),
-            data.get("severity", "low"),
-            data.get("confidence", 0.0),
+            f"remote_ingest {classification.get('notes', '')}".strip(),
+            classification.get("is_attack", 0),
+            classification.get("attack_type", "benign"),
+            classification.get("severity", "low"),
+            classification.get("confidence", 0.0),
         ),
     )
     event_id = cursor.lastrowid
-    if int(data.get("is_attack", 0)) == 1 and float(data.get("confidence", 0)) >= 0.86 and data.get("attack_type") in VALID_LABELS:
+    if (
+        classification.get("is_attack") == 1
+        and float(classification.get("confidence", 0)) >= 0.86
+        and classification.get("attack_type") in VALID_LABELS
+    ):
         payload = " ".join(
             [
                 data.get("path", ""),
@@ -868,9 +880,9 @@ def ingest_remote_event():
                 data.get("body", ""),
             ]
         ).strip()
-        save_training_candidate(payload, data.get("attack_type"), event_id)
+        save_training_candidate(payload, classification.get("attack_type"), event_id)
     db.commit()
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "classification": classification})
 
 
 

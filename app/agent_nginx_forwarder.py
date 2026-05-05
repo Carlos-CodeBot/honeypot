@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
+from urllib.parse import urlsplit
 from urllib import request as urllib_request
 
 LOG_PATTERN = re.compile(
@@ -18,20 +19,18 @@ def parse_line(line: str):
     if not m:
         return None
     gd = m.groupdict()
+    raw_path = gd["path"]
+    parsed_url = urlsplit(raw_path)
     return {
         "timestamp": datetime.utcnow().isoformat(),
         "ip": gd["ip"],
         "method": gd["method"],
-        "path": gd["path"],
+        "path": parsed_url.path or "/",
         "user_agent": gd["ua"],
-        "query_string": "",
+        "query_string": parsed_url.query or "",
         "body": "",
-        "headers": "",
-        "notes": "agent_nginx_log",
-        "is_attack": 0,
-        "attack_type": "benign",
-        "severity": "low",
-        "confidence": 0.0,
+        "headers": f"status={gd['status']} size={gd['size']} ref={gd['ref']}",
+        "notes": "agent_nginx_log_raw",
     }
 
 

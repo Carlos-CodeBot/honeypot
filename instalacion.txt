@@ -64,7 +64,7 @@ A) INSTALACIÓN DEL SERVIDOR DASHBOARD
    - Hacer backup de /data (DB y modelo)
 
 -----------------------------------------------------
-B) INSTALACIÓN DEL SERVIDOR AGENTE (FRONT/HONEYPOT)
+B) INSTALACIÓN DEL SERVIDOR AGENTE (NGINX DEL CLIENTE)
 -----------------------------------------------------
 
 1. Clonar repositorio
@@ -74,24 +74,17 @@ B) INSTALACIÓN DEL SERVIDOR AGENTE (FRONT/HONEYPOT)
 2. Crear archivo de entorno
    cp .env.example .env
 
-3. Editar .env (valores obligatorios para modo agente)
-   ENABLE_PUBLIC_SITE=1
-   ENABLE_DASHBOARD=0
+3. Nota importante de arquitectura
+   - En modo agente NO necesitas montar la web de honeypot.
+   - El agente se instala en el server Nginx real del cliente.
+   - Solo reenvía logs HTTP al dashboard/honeypotserver para análisis centralizado.
 
-   # envío hacia dashboard
+4. Variables que debes usar en el agente (mismos secretos del dashboard)
    FORWARD_LOG_URL=https://<DOMINIO_DASHBOARD>/api/ingest-event
    FORWARD_LOG_TOKEN=<mismo_token_INGEST_TOKEN_del_dashboard>
    INGEST_HMAC_SECRET=<mismo_secreto_hmac_del_dashboard>
 
-   # seguridad local
-   SECRET_KEY=<secret_key_local>
-   SESSION_COOKIE_SECURE=1
-
-4. Levantar servicio del agente/front
-   docker compose up -d --build
-
-5. Verificar salida HTTP del frontend
-   curl -I http://127.0.0.1:8000/
+5. Ejecutar agente de logs (recomendado con systemd, ver sección C)
 
 -----------------------------------------------------
 C) AGENTE DESDE LOGS NGINX (opcional/recomendado)
@@ -145,9 +138,10 @@ D) PRUEBAS DE INTEGRACIÓN
    - Entrar a /dashboard
    - Revisar tabla de eventos y gráficas
 
-3. Validar ingesta segura
+3. Validar ingesta segura y clasificación remota
    - Si token/HMAC no coinciden, el dashboard debe responder 403
    - Si timestamp está fuera de ventana, debe responder 400
+   - El dashboard debe clasificar los eventos recibidos (no confiar en clasificación del agente)
 
 -----------------------------------------------------
 E) CHECKLIST FINAL DE OPERACIÓN
