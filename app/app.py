@@ -317,23 +317,21 @@ def init_db():
     admin_pass = app.config.get("ADMIN_PASS")
 
     if admin_user and admin_pass:
-        admin_exists = db.execute(
-            "SELECT id FROM dashboard_users WHERE username = ?",
-            (admin_user,),
-        ).fetchone()
-
-        if not admin_exists:
-            db.execute(
-                """
-                INSERT INTO dashboard_users(username, password_hash, role, is_active, created_at)
-                VALUES (?, ?, 'admin', 1, ?)
-                """,
-                (
-                    admin_user,
-                    generate_password_hash(admin_pass),
-                    datetime.utcnow().isoformat(),
-                ),
-            )
+        db.execute(
+            """
+            INSERT INTO dashboard_users(username, password_hash, role, is_active, created_at)
+            VALUES (?, ?, 'admin', 1, ?)
+            ON CONFLICT(username) DO UPDATE SET
+                password_hash = excluded.password_hash,
+                role = 'admin',
+                is_active = 1
+            """,
+            (
+                admin_user,
+                generate_password_hash(admin_pass),
+                datetime.utcnow().isoformat(),
+            ),
+        )
     else:
         app.logger.warning(
             "ADMIN_USER/ADMIN_PASS no están configurados; no se creó usuario admin inicial."
