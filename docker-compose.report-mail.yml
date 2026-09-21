@@ -1,0 +1,21 @@
+# Overlay adicional. No reemplaza docker-compose.prod.yml ni inicia app.py.
+services:
+  honeypot-report-mail:
+    build: .
+    image: honeypot-report-mail:weekly
+    container_name: honeypot-report-mail
+    command: ["python", "/app/report_mail.py", "--db", "/data/honeypot.db"]
+    restart: unless-stopped
+    environment:
+      REPORT_MAIL_DIR: /data/report-mail
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - report-mail-existing-data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+
+volumes:
+  report-mail-existing-data:
+    external: true
+    name: ${REPORT_DATA_VOLUME:-honeypot_honeypot-data}

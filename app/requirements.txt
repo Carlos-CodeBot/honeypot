@@ -3,3 +3,5 @@ Werkzeug==3.0.3
 scikit-learn==1.5.2
 joblib==1.4.2
 gunicorn==22.0.0
+cryptography==50.0.1
+tzdata==2026.2

@@ -1,0 +1,67 @@
+<section id="tab-report-mail" class="tab-content">
+  <section class="card mail-card">
+    <div class="mail-heading">
+      <div><h3>Informes por correo</h3><p>Un resumen para dirección y el informe ejecutivo PDF, cada semana.</p></div>
+      <span id="mail-service" class="mail-badge">Consultando servicio…</span>
+    </div>
+    <p id="mail-notice" class="mail-notice" role="status" aria-live="polite"></p>
+    <form id="mail-form" autocomplete="off">
+      <fieldset><legend>1. Cuenta Microsoft 365</legend>
+        <div class="mail-grid">
+          <label>Método de envío
+            <select id="mail-transport" name="transport">
+              <option value="smtp">Correo y contraseña (SMTP)</option>
+              <option value="graph">Aplicación Microsoft Graph (OAuth)</option>
+            </select>
+          </label>
+          <label>Correo remitente
+            <input id="mail-sender" name="sender" type="email" placeholder="honeypot@empresa.com" maxlength="254" required>
+          </label>
+        </div>
+        <div id="mail-smtp-fields">
+          <label>Contraseña del correo
+            <input id="mail-password" name="password" type="password" autocomplete="new-password" maxlength="4096" placeholder="Dejar vacío para conservar la credencial guardada">
+          </label>
+          <p class="mail-help">Conexión cifrada a smtp.office365.com:587 mediante STARTTLS. La cuenta debe permitir SMTP AUTH. Si Microsoft lo rechaza, el estado del envío lo indicará.</p>
+        </div>
+        <div id="mail-graph-fields" hidden>
+          <div class="mail-grid">
+            <label>Tenant ID<input id="mail-tenant" name="tenant_id" maxlength="36" placeholder="Identificador del directorio"></label>
+            <label>Client ID<input id="mail-client" name="client_id" maxlength="36" placeholder="Identificador de la aplicación"></label>
+          </div>
+          <label>Secreto de la aplicación<input id="mail-secret" name="client_secret" type="password" autocomplete="new-password" maxlength="4096" placeholder="Dejar vacío para conservar el secreto guardado"></label>
+          <p class="mail-help">Requiere una aplicación autorizada para enviar desde este buzón. Recomendado para automatización a largo plazo; consulte la guía de instalación.</p>
+        </div>
+        <p id="mail-credential-status" class="mail-help"></p>
+      </fieldset>
+      <fieldset><legend>2. Destinatarios y horario</legend>
+        <label>Destinatarios (uno por línea o separados por coma; máximo 20)
+          <textarea id="mail-recipients" name="recipients" rows="3" required placeholder="seguridad@empresa.com&#10;direccion@empresa.com"></textarea>
+        </label>
+        <div class="mail-grid mail-schedule">
+          <label>Día<select id="mail-weekday" name="weekday">
+            <option value="0">Lunes</option><option value="1">Martes</option><option value="2">Miércoles</option>
+            <option value="3">Jueves</option><option value="4">Viernes</option><option value="5">Sábado</option><option value="6">Domingo</option>
+          </select></label>
+          <label>Hora<input id="mail-hour" name="hour" type="time" value="07:00" required></label>
+          <label>Zona horaria<input id="mail-timezone" name="timezone" list="mail-zones" value="America/Bogota" required>
+            <datalist id="mail-zones"><option value="America/Bogota"><option value="UTC"><option value="Europe/Madrid"><option value="America/Mexico_City"></datalist>
+          </label>
+        </div>
+        <label class="mail-toggle"><input id="mail-enabled" name="enabled" type="checkbox"> Activar envío semanal automático</label>
+        <p class="mail-help">El PDF cubre la semana anterior, de lunes a domingo completos en UTC. La zona horaria elegida se usa para programar el envío.</p>
+      </fieldset>
+      <div class="mail-actions">
+        <button type="submit" id="mail-save">Guardar configuración</button>
+        <button type="button" id="mail-test">Enviar prueba con PDF</button>
+        <button type="button" id="mail-send">Enviar informe ahora</button>
+      </div>
+      <p class="mail-help">La prueba y el envío manual usan la configuración guardada y envían a todos sus destinatarios. Las credenciales se guardan cifradas y nunca se vuelven a mostrar.</p>
+    </form>
+  </section>
+  <section class="card mail-card">
+    <div class="mail-heading"><div><h3>Programación y actividad</h3><p id="mail-next">Sin programación activa.</p></div><button type="button" id="mail-refresh">Actualizar estado</button></div>
+    <p class="mail-help">“Aceptado” significa que Microsoft recibió el mensaje para enviarlo; no confirma la entrega final. Si el resultado es incierto, compruebe el buzón antes de repetir.</p>
+    <div class="table-scroll"><table><thead><tr><th>Fecha</th><th>Tipo / período UTC</th><th>Estado</th><th>Detalle</th></tr></thead><tbody id="mail-history"></tbody></table></div>
+  </section>
+</section>

@@ -1403,6 +1403,10 @@ from executive_report import register_report
 
 register_report(app, dashboard_auth_required, DB_PATH)
 
+from report_mail import register_mail
+
+register_mail(app, dashboard_admin_required, DB_PATH)
+
 if __name__ == "__main__":
     init_db()
     app.run(host="0.0.0.0", port=8000)

@@ -100,6 +100,21 @@ class Integration(unittest.TestCase):
             session["dashboard_user_id"]=1
     def test_anonymous_denied(self):
         self.assertEqual(self.client.get("/dashboard/api/executive-report.pdf").status_code,401)
+    def test_mail_real_auth_and_role_guards(self):
+        self.assertEqual(self.client.get('/dashboard/api/report-mail').status_code,401)
+        self.login()
+        self.assertEqual(self.client.get('/dashboard/api/report-mail').status_code,200)
+        db=sqlite3.connect(self.module.DB_PATH)
+        db.execute("UPDATE dashboard_users SET role='analyst' WHERE id=1");db.commit()
+        try:
+            self.assertEqual(self.client.get('/dashboard/api/report-mail').status_code,403)
+            self.assertEqual(self.client.post('/dashboard/api/report-mail/send',json={'kind':'test'}).status_code,403)
+            self.assertNotIn(b'id="mail-form"',self.client.get('/dashboard').data)
+        finally:
+            db.execute("UPDATE dashboard_users SET role='admin' WHERE id=1");db.commit();db.close()
+        self.app.config['ENABLE_DASHBOARD']=False
+        try: self.assertEqual(self.client.get('/dashboard/api/report-mail').status_code,404)
+        finally: self.app.config['ENABLE_DASHBOARD']=True
     def test_authenticated_pdf_and_dashboard(self):
         self.login()
         response=self.client.get("/dashboard/api/executive-report.pdf?start=2026-01-01&end=2026-01-02")
