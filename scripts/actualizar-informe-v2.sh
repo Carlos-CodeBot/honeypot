@@ -29,6 +29,8 @@ Uso: bash actualizar-informe-v2.sh [opciones]
 
 Sin opciones despliega si el lector local esta deshabilitado. Si esta activo
 o su estado es desconocido, prepara todo y termina con codigo 3 sin reiniciar.
+Al activar, fuerza la recreacion, compara la imagen activa con la construida,
+verifica la API y la plantilla, y valida/recarga Nginx.
 No cambia app/app.py, Compose, .env, .envn, collector, el servidor publico ni
 honeypot-log-puller. El parche se limita al generador y plantilla del informe.
 Requiere Docker Compose v2, Git, Bash, tar, flock y acceso al repositorio.
@@ -173,6 +175,9 @@ docker cp "$WEB:$PDF_TMP" "$BACKUP/informe-v2.pdf"
 
 STAGE=construccion
 "${COMPOSE[@]}" build honeypot-web
+BUILT_IMAGE=$(docker image inspect "${PROJECT}-${WEB}" --format '{{.Id}}')
+[[ -n "$BUILT_IMAGE" ]] || fail 'No se pudo identificar la imagen construida.'
+printf 'Imagen construida: %s\n' "$BUILT_IMAGE"
 sha256sum --check "$BACKUP/archivos-protegidos.sha256"
 
 if ((PREPARE_ONLY)); then
@@ -201,7 +206,11 @@ if ((READER_RISK)); then
 fi
 
 STAGE=activar
-"${COMPOSE[@]}" up -d --no-deps honeypot-web
+"${COMPOSE[@]}" up -d --no-deps --no-build --force-recreate honeypot-web
+STAGE=verificar_imagen
+RUNNING_IMAGE=$(docker inspect "$WEB" --format '{{.Image}}')
+printf 'Imagen en ejecucion: %s\n' "$RUNNING_IMAGE"
+[[ "$RUNNING_IMAGE" == "$BUILT_IMAGE" ]] || fail "El contenedor no usa la imagen construida. Consulte $BACKUP/actualizacion.log."
 
 STAGE=salud
 docker exec -i "$WEB" python - <<'PY'
@@ -222,6 +231,7 @@ docker exec -i "$WEB" python - <<'PY'
 from pathlib import Path
 assert 'Informe para dirección' in Path('/app/templates/dashboard.html').read_text(encoding='utf-8')
 assert 'class ReportCanvas:' in Path('/app/executive_report.py').read_text(encoding='utf-8')
+assert '--query-timeout' in Path('/app/executive_report.py').read_text(encoding='utf-8')
 print('Plantilla y generador nuevos presentes en el contenedor.')
 PY
 
