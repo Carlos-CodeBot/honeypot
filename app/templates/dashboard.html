@@ -32,7 +32,8 @@
     <section id="tab-overview" class="tab-content active">
       <section class="card">
         <h3>Informe ejecutivo PDF</h3>
-        <p>Período UTC, máximo 90 días. Sin fechas: últimos 30 días. Incluye comparación y recomendaciones.</p>
+        <p>Informe para dirección: indicadores, top 10 de IP y países, técnicas con ejemplos de los registros y confianza separada entre IA y reglas. Incluye recomendaciones y metodología.</p>
+        <p>Período UTC, máximo 90 días. Sin fechas: últimos 30 días. Los países dependen de la geolocalización almacenada.</p>
         <form action="{{ url_for('executive_report_pdf') }}" method="get">
           <label>Desde <input type="date" name="start"></label>
           <label>Hasta <input type="date" name="end"></label>
