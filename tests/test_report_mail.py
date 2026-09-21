@@ -143,6 +143,53 @@ class MailTests(unittest.TestCase):
         self.assertEqual(next(message.iter_attachments()).get_content_type(),'application/pdf')
         sending.assert_called_once()
 
+    def test_snapshot_finishes_with_commits_between_every_backup_batch(self):
+        connect = sqlite3.connect
+        with closing(connect(self.db_path)) as writer:
+            writer.execute('PRAGMA journal_mode=WAL')
+            writer.execute('CREATE TABLE attack_logs(timestamp TEXT,is_attack INTEGER,severity TEXT,ip TEXT,path TEXT,attack_type TEXT)')
+            writer.execute("INSERT INTO attack_logs VALUES ('2026-09-15',1,'high','192.0.2.1','/search','sqli')")
+            writer.execute('CREATE TABLE padding(data BLOB)')
+            writer.executemany('INSERT INTO padding VALUES (zeroblob(4096))', [()]*800)
+            writer.commit()
+            batches=[]
+            class ConcurrentCopy(sqlite3.Connection):
+                def backup(source, target, **kwargs):
+                    progress=kwargs['progress']
+                    def with_write(status, remaining, total):
+                        if remaining:
+                            batches.append(remaining)
+                            if len(batches)>20:
+                                raise AssertionError('Backup restarted instead of retaining its snapshot')
+                            writer.execute("INSERT INTO attack_logs VALUES ('2026-09-15',1,'high','192.0.2.2','/new','sqli')")
+                            writer.commit()
+                        progress(status,remaining,total)
+                    return super().backup(target,**dict(kwargs,progress=with_write))
+            def connection(path,*args,**kwargs):
+                if kwargs.get('uri'): kwargs['factory']=ConcurrentCopy
+                return connect(path,*args,**kwargs)
+            with patch.object(mail.sqlite3,'connect',side_effect=connection):
+                data,pdf=mail.snapshot_report(self.store,dict(start='2026-09-14',end='2026-09-20'))
+            self.assertGreater(len(batches),1)
+            self.assertEqual(data['attacks'],1)
+            self.assertTrue(pdf.startswith(b'%PDF'))
+            self.assertEqual(writer.execute('SELECT COUNT(*) FROM attack_logs').fetchone()[0],1+len(batches))
+            self.assertEqual(writer.execute('PRAGMA journal_mode').fetchone()[0],'wal')
+
+    def test_snapshot_timeout_releases_locks_cleans_temp_and_is_actionable(self):
+        with closing(sqlite3.connect(self.db_path)) as db:
+            db.execute('CREATE TABLE sample(id INTEGER)')
+        with patch.object(mail.time,'monotonic',side_effect=[0,3]):
+            with self.assertRaises(mail.SnapshotTimeout):
+                mail.snapshot_report(self.store,dict(start='2026-09-14',end='2026-09-20'))
+        self.assertFalse(list(self.store.directory.glob('pdf-*')))
+        with closing(sqlite3.connect(self.db_path,timeout=.01)) as db, db:
+            db.execute('INSERT INTO sample VALUES (1)')
+        job=self.queued()
+        with patch.object(mail,'snapshot_report',side_effect=mail.SnapshotTimeout('La copia SQLite superó el límite.')):
+            mail.process_job(self.store,job)
+        self.assertEqual(self.store.status()['jobs'][0]['detail'],'La copia SQLite superó el límite.')
+
     def test_graph_uses_fixed_endpoints_and_saves_sent_message(self):
         job=self.queued()
         config=dict(CONFIG,transport='graph',tenant_id='00000000-0000-0000-0000-000000000001',client_id='00000000-0000-0000-0000-000000000002')
