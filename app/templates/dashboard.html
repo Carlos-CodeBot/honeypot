@@ -27,6 +27,9 @@
       <button class="tab-link" data-tab="tab-events">Eventos</button>
       <button class="tab-link" data-tab="tab-intel">Inteligencia por IP</button>
       <button class="tab-link" data-tab="tab-users">Usuarios</button>
+      {% if current_role == 'Administrador' %}
+      <button class="tab-link" data-tab="tab-report-mail">Informes por correo</button>
+      {% endif %}
     </nav>
 
     <section id="tab-overview" class="tab-content active">
@@ -78,6 +81,10 @@
         </div>
       </section>
     </section>
+
+    {% if current_role == 'Administrador' %}
+      {% include 'report_mail.html' %}
+    {% endif %}
 
     <section id="tab-training" class="tab-content">
       <section class="card">
@@ -190,6 +197,15 @@ let pieChart = null;
 let topIpsChart = null;
 let modelHealthChart = null;
 let countriesChart = null;
+function textRow(values) {
+  const row = document.createElement('tr');
+  for (const value of values) {
+    const cell = document.createElement('td');
+    cell.textContent = value == null ? '' : String(value);
+    row.append(cell);
+  }
+  return row;
+}
 const tabLinks = document.querySelectorAll('.tab-link');
 const tabContents = document.querySelectorAll('.tab-content');
 
@@ -207,25 +223,14 @@ async function loadLogs(){
   const res = await fetch('/dashboard/api/logs?only_attacks=' + onlyAttacks);
   const rows = await res.json();
   const tbody = document.querySelector('#logs tbody');
-  tbody.innerHTML = rows.map(r => `
-    <tr>
-      <td>${r.timestamp}</td>
-      <td>${r.ip || ''}</td>
-      <td>${r.path}</td>
-      <td>${r.attack_type}</td>
-      <td>${r.severity}</td>
-      <td>${r.confidence}</td>
-    </tr>
-  `).join('');
+  tbody.replaceChildren(...rows.map(r => textRow([r.timestamp,r.ip,r.path,r.attack_type,r.severity,r.confidence])));
 }
 
 async function loadIntel(){
   const res = await fetch('/dashboard/api/intel');
   const rows = await res.json();
   const tbody = document.querySelector('#intel tbody');
-  tbody.innerHTML = rows.map(r => `
-    <tr><td>${r.ip || ''}</td><td>${r.country || 'Desconocido'}</td><td>${r.total}</td><td>${r.attacks}</td><td>${r.max_confidence}</td></tr>
-  `).join('');
+  tbody.replaceChildren(...rows.map(r => textRow([r.ip,r.country || 'Desconocido',r.total,r.attacks,r.max_confidence])));
 }
 
 async function loadDistribution(){
@@ -304,16 +309,18 @@ async function loadCandidates() {
   const res = await fetch('/dashboard/api/candidates');
   const rows = await res.json();
   const tbody = document.querySelector('#candidates tbody');
-  tbody.innerHTML = rows.map(r => `
-    <tr>
-      <td>${r.id}</td>
-      <td>${r.timestamp}</td>
-      <td>${r.reviewed_label || r.suggested_label}</td>
-      <td>${r.status}</td>
-      <td>${(r.payload || '').slice(0, 120)}</td>
-      <td>${r.status === 'pending' ? `<span class="row-actions"><button onclick="approveCandidate(${r.id}, '${r.suggested_label}')">Aprobar</button><button onclick="rejectCandidate(${r.id})">Rechazar</button></span>` : ''}</td>
-    </tr>
-  `).join('');
+  tbody.replaceChildren(...rows.map(r => {
+    const row = textRow([r.id,r.timestamp,r.reviewed_label || r.suggested_label,r.status,(r.payload || '').slice(0,120),'']);
+    if (r.status === 'pending') {
+      const actions = document.createElement('span'); actions.className = 'row-actions';
+      for (const [label,handler] of [['Aprobar',()=>approveCandidate(r.id,r.suggested_label)],['Rechazar',()=>rejectCandidate(r.id)]]) {
+        const button = document.createElement('button'); button.type='button'; button.textContent=label;
+        button.addEventListener('click',handler); actions.append(button);
+      }
+      row.lastChild.append(actions);
+    }
+    return row;
+  }));
   document.getElementById('pending-count').innerText = rows.filter(x => x.status === 'pending').length;
 }
 
@@ -365,30 +372,19 @@ async function loadUsers() {
   if (res.status !== 200) return;
   const rows = await res.json();
   const tbody = document.querySelector('#users-table tbody');
-  tbody.innerHTML = rows.map(u => `
-    <tr>
-      <td>${u.id}</td>
-      <td>${u.username}</td>
-      <td>${u.role}</td>
-      <td>${u.is_active ? 'sí' : 'no'}</td>
-      <td><button onclick="changePassword(${u.id})">Cambiar</button></td>
-    </tr>
-  `).join('');
+  tbody.replaceChildren(...rows.map(u => {
+    const row=textRow([u.id,u.username,u.role,u.is_active ? 'sí' : 'no','']);
+    const button=document.createElement('button'); button.type='button'; button.textContent='Cambiar';
+    button.addEventListener('click',()=>changePassword(u.id)); row.lastChild.append(button);
+    return row;
+  }));
 }
 
 async function loadModelMetrics() {
   const res = await fetch('/dashboard/api/model-metrics');
   const rows = await res.json();
   const tbody = document.querySelector('#model-metrics tbody');
-  tbody.innerHTML = rows.map(r => `
-    <tr>
-      <td>${r.label_es}</td>
-      <td>${(r.precision * 100).toFixed(1)}%</td>
-      <td>${(r.recall * 100).toFixed(1)}%</td>
-      <td>${(r.f1 * 100).toFixed(1)}%</td>
-      <td>${r.support}</td>
-    </tr>
-  `).join('');
+  tbody.replaceChildren(...rows.map(r => textRow([r.label_es,(r.precision*100).toFixed(1)+'%',(r.recall*100).toFixed(1)+'%',(r.f1*100).toFixed(1)+'%',r.support])));
 }
 
 async function createUser(event) {
@@ -570,5 +566,8 @@ updateChartSize(document.getElementById('chart-size').value);
 loadDistribution();
 setInterval(refreshDashboardData, 7000);
 </script>
+{% if current_role == 'Administrador' %}
+<script src="{{ url_for('static', filename='report_mail.js') }}" defer></script>
+{% endif %}
 </body>
 </html>

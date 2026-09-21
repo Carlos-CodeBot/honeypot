@@ -126,3 +126,21 @@ th,td{padding:.45rem;border-bottom:1px solid #e2e8f0;text-align:left;font-size:.
 }
 @keyframes progressShimmer{0%{background-position:180% 0}100%{background-position:-20% 0}}
 @keyframes progressPulse{0%,100%{box-shadow:0 0 0 rgba(0,255,0,.2)}50%{box-shadow:0 0 10px rgba(0,255,0,.45)}}
+.mail-card fieldset{border:1px solid #326044;border-radius:10px;margin:1.2rem 0;padding:1.1rem}
+.mail-card legend{padding:0 .5rem;font-weight:700}
+.mail-heading{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+.mail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}
+.mail-schedule{grid-template-columns:repeat(3,minmax(0,1fr));margin-top:1rem}
+.mail-card label{display:block;margin-bottom:.8rem}
+.mail-card input:not([type=checkbox]),.mail-card select,.mail-card textarea{display:block;width:100%;box-sizing:border-box;margin-top:.4rem;padding:.65rem;border-radius:6px}
+.dashboard-theme .mail-card textarea{background:#040a06;color:#fff;border:1px solid #00ff00;font:inherit}
+.mail-card [hidden]{display:none!important}
+.mail-card .mail-toggle{display:flex;align-items:center;gap:.6rem;margin-top:1rem}
+.mail-toggle input{width:auto;margin:0}
+.mail-help{font-size:.88rem;line-height:1.5;opacity:.85}
+.mail-actions{display:flex;gap:.75rem;flex-wrap:wrap}
+.mail-badge{padding:.45rem .75rem;border:1px solid #5cbf89;border-radius:20px;font-size:.85rem}
+.mail-notice{padding:.5rem 0;min-height:1.3em}
+.mail-error{color:#ffb6a6!important}
+.mail-card button:disabled{opacity:.5;cursor:wait}
+@media(max-width:700px){.mail-grid,.mail-schedule{grid-template-columns:1fr}}
