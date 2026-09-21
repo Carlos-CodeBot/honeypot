@@ -227,14 +227,30 @@ class Store:
                 db.execute("UPDATE jobs SET secret='' WHERE id=?", (job_id,))
 
 
+class SnapshotTimeout(TimeoutError):
+    """Safe, actionable error without provider or credential details."""
+
+
 def snapshot_report(store, job):
     with tempfile.TemporaryDirectory(prefix="pdf-", dir=store.directory) as directory:
         copy = Path(directory) / "events.db"
-        deadline = time.monotonic() + 60
-        def progress(*_):
-            if time.monotonic() > deadline:
-                raise TimeoutError("snapshot")
         with closing(sqlite3.connect(store.data_db.as_uri() + "?mode=ro", uri=True, timeout=2)) as source:
+            # Pin one read snapshot: otherwise commits on another connection can
+            # restart the incremental backup indefinitely on a busy honeypot.
+            # WAL permits concurrent commits. Rollback journals block commits,
+            # so keep their read-lock budget short rather than risking ingestion.
+            wal = source.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+            budget = 60 if wal else 2
+            deadline = time.monotonic() + budget
+            def progress(*_):
+                if time.monotonic() > deadline:
+                    raise SnapshotTimeout(
+                        "La copia SQLite superó 60 s; revise tamaño, espacio y rendimiento del disco."
+                        if wal else
+                        "La copia SQLite superó 2 s en modo sin WAL. Se liberó la lectura para proteger la ingesta. Revise el tamaño y planifique WAL o una ventana de baja actividad."
+                    )
+            source.execute("BEGIN")
+            source.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
             with closing(sqlite3.connect(copy)) as target:
                 source.backup(target, pages=256, progress=progress, sleep=.1)
         data = collect(copy, job["start"], job["end"], query_timeout=120)
@@ -315,6 +331,8 @@ def process_job(store, job):
         store.mark(job["id"], "partial" if partial else "accepted",
                    "Microsoft aceptó solo algunos destinatarios. No se reintenta automáticamente." if partial else
                    "Microsoft aceptó el mensaje. Esto no confirma su entrega final; revise posibles devoluciones.")
+    except SnapshotTimeout as exc:
+        store.mark(job["id"], "failed", str(exc))
     except smtplib.SMTPAuthenticationError:
         store.mark(job["id"], "failed", "Microsoft rechazó la autenticación SMTP. Verifique la contraseña y que SMTP AUTH esté habilitado, o use Graph.")
     except (smtplib.SMTPRecipientsRefused, smtplib.SMTPDataError):

@@ -78,8 +78,15 @@ actual apunta a Microsoft 365 comercial global, no nubes soberanas ni Exchange l
   aceptar solo algunos destinatarios; se muestra un estado parcial.
 
 El worker crea una copia consistente de `honeypot.db` mediante SQLite Backup,
-cierra la conexión de origen y genera el PDF sobre la copia (60 s de presupuesto
-de copia; 120 s de consultas). La copia temporal se elimina al finalizar. Límite
+cierra la conexión de origen y genera el PDF sobre la copia. Una transacción de
+lectura fija la vista de origen para que las escrituras concurrentes no reinicien
+la copia por bloques. En modo WAL, el presupuesto de copia es 60 s; otros modos
+usan 2 s para limitar cuánto se retienen las confirmaciones de escritura. No se
+cambia automáticamente el modo de la base. Si una base sin WAL no puede copiarse
+en ese margen, el historial lo indica: planifique una ventana de baja actividad
+o una migración controlada a WAL, considerando sus respaldos y almacenamiento.
+Las consultas sobre la copia tienen un presupuesto de 120 s.
+La copia temporal se elimina al finalizar, incluso al fallar. Límite
 del PDF adjunto: 2 MiB. No inicia `app.py`, el modelo ni el lector personalizado.
 
 ## Persistencia y credenciales
@@ -163,6 +170,23 @@ se detiene antes de recrear o iniciar servicios. Está destinado al despliegue
 descrito; no modifica un servidor remoto desde Codex.
 
 ## Reversión
+
+### Corrección de `TimeoutError: snapshot` en instalaciones existentes
+
+El archivo autónomo `scripts/corregir-snapshot-correo.sh` contiene el parche del
+módulo. Ejecútelo con `bash corregir-snapshot-correo.sh` tras copiarlo al servidor.
+Respalda el módulo y etiqueta la imagen anterior, aplica solo ese cambio,
+construye la imagen del servicio de correo y prueba copia/PDF sobre el volumen
+real sin conexión de red. Solo si la prueba pasa recrea `honeypot-report-mail`.
+No reinicia web ni el lector. No necesita el ZIP anterior ni aplica el README.
+Si encuentra una entrega en preparación/envío, se detiene antes de recrear;
+espere a que termine antes de repetir. No reenvía los trabajos fallidos.
+
+El script puede detenerse con el error específico de presupuesto si la base es
+demasiado grande/lenta para el modo de journal actual; conserva el servicio
+anterior. No activa WAL ni amplía bloqueos de escritura automáticamente.
+
+### Revertir la instalación completa
 
 Desactive el envío en la pestaña y detenga `honeypot-report-mail`. Si debe retirar
 el código, aplique el parche en reversa solo si `git apply --reverse --check` pasa,
