@@ -5,6 +5,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 import executive_report as report
@@ -97,6 +98,33 @@ class ExecutiveV2(unittest.TestCase):
         data = self.collect()
         self.assertEqual(data["countries"], [])
         self.assertEqual(data["geo_unknown"], 1)
+
+    def test_timeout_validation(self):
+        for value in (0, -1, 601, float('inf'), float('nan'), 'bad', None):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                report.collect(self.path, '2026-01-01', '2026-01-02', query_timeout=value)
+        self.assertEqual(report.query_budget('120'), 120)
+
+    def test_configurable_deadline_is_still_enforced(self):
+        self.event()
+        self.db.execute("INSERT INTO attack_logs(timestamp,ip,is_attack,attack_type,severity,confidence) SELECT timestamp,ip,is_attack,attack_type,severity,confidence FROM attack_logs")
+        for _ in range(10):
+            self.db.execute("INSERT INTO attack_logs(timestamp,ip,is_attack,attack_type,severity,confidence) SELECT timestamp,ip,is_attack,attack_type,severity,confidence FROM attack_logs")
+        self.db.commit()
+        with patch.object(report.time, 'monotonic', side_effect=[0]+[5]*100000):
+            with self.assertRaises(sqlite3.OperationalError):
+                report.collect(self.path, '2026-01-01', '2026-01-02', query_timeout=1)
+        with patch.object(report.time, 'monotonic', side_effect=[0]+[5]*100000):
+            data = report.collect(self.path, '2026-01-01', '2026-01-02', query_timeout=15)
+        self.assertEqual(data['attacks'], 2048)
+
+    def test_latest_sample_ties_and_scores_remain_consistent(self):
+        self.event(confidence=.6, path='/first')
+        self.event(confidence=.9, path='/last')
+        data = self.collect()
+        self.assertEqual(data['examples'][0]['path'], '/last')
+        self.assertEqual(data['examples'][0]['scores']['valid'], 2)
+        self.assertAlmostEqual(data['examples'][0]['scores']['average'], .75)
 
     def test_long_untrusted_text_stays_inside_page(self):
         for i in range(10):

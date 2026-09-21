@@ -121,10 +121,15 @@ proceso web ni conserva el módulo temporal al recrear el contenedor. El informe
 lee la base en modo `ro` y `query_only`, dentro de una transacción coherente, y
 cierra la conexión antes del renderizado. No modifica datos ni entrena el modelo.
 
-Consultas adicionales de rankings y muestras pueden recorrer la tabla varias
-veces. Se conserva el límite de aproximadamente dos segundos para consultas y
-200 ms para esperar bloqueos. En bases grandes puede ser necesario usar una
-copia consistente o una ventana de menor carga; reducir el intervalo no garantiza
+Las consultas de rankings recorren la tabla varias veces. Países agrega primero
+por IP; las muestras y sus medias se seleccionan en una consulta con funciones
+de ventana, seguida de búsquedas por ID, evitando dos recorridos por categoría.
+El presupuesto web es de 15 segundos por defecto; puede ajustarse mediante
+`EXECUTIVE_REPORT_QUERY_TIMEOUT`, con un máximo efectivo de 30 segundos para web.
+La CLI usa 120 segundos por defecto y acepta `--query-timeout N` entre 1 y 600.
+Se mantienen 200 ms para esperar bloqueos. Estos límites son presupuestos de
+consulta, no garantías del tiempo total HTTP. En bases grandes use una copia
+consistente o una ventana de menor carga. Reducir el intervalo no garantiza
 evitar un recorrido completo. No se añaden índices en esta actualización.
 Use el backup de SQLite para una copia consistente, no copie a ciegas una base
 activa con WAL. La lectura también consume CPU/E/S y puede retrasar escrituras.
@@ -210,10 +215,27 @@ python tests/build_report_demo.py --output informe-demo.pdf
 
 `pypdf` es solo una dependencia de pruebas; no se agrega a producción. El
 generador de demostración usa una base temporal sintética y la elimina al acabar.
-Las 20 pruebas verifican fechas, comparación, autenticación, permisos de lectura,
+Las 23 pruebas verifican fechas, comparación, autenticación, permisos de lectura,
 bloqueos, presupuesto de consultas, PDF vacío, rankings, procedencia de la
 confianza, valores inválidos, evidencia del período y límites de página con
-textos largos. La muestra PDF se revisó también renderizada a imágenes.
+textos largos, límites configurables y empates de muestras. La muestra PDF se
+revisó también renderizada a imágenes. En una prueba local con 300.000 eventos
+sintéticos, la versión anterior se interrumpió a los 2 segundos y la corregida
+finalizó en 2,24 segundos; no es una garantía para otros servidores o volúmenes.
+
+### Recuperación de `sqlite3.OperationalError: interrupted`
+
+El generador original compartía un presupuesto de dos segundos para todas las
+consultas. Si el instalador se detuvo en `prueba_pdf`, ya pudo aplicar el parche,
+pero todavía no construyó ni recreó el servicio. Conserve los cambios y el respaldo.
+El instalador corregido admite tanto la base original como el parche v2 ya
+aplicado, y genera el PDF de prueba sobre la copia SQLite consistente que verificó,
+en lugar de mantener una consulta larga contra la base activa.
+
+Si la copia también necesita más tiempo, utilice `--query-timeout 300` en la CLI
+o en el instalador corregido (máximo 600). El dashboard sigue usando el presupuesto
+web independiente: el éxito de la CLI no garantiza que una descarga web muy grande
+quepa en él. La protección contra reiniciar un lector activo se conserva.
 
 Esta actualización modifica el generador, el texto del formulario y esta guía;
 añade pruebas, generador de ejemplo y referencia desde README. No cambia la
