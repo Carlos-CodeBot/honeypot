@@ -1,5 +1,7 @@
 """Executive PDF reports. Standard library only; no schema or configuration changes."""
 import argparse
+import math
+import os
 import re
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -32,9 +34,19 @@ def period(start=None, end=None):
         raise ValueError("Seleccione entre 1 y 90 días, sin fechas futuras.")
     return first, stop, previous
 
-def collect(db_path, start=None, end=None):
+def query_budget(value):
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("El tiempo de consulta debe ser un número entre 1 y 600 segundos.") from None
+    if not math.isfinite(value) or not 1 <= value <= 600:
+        raise ValueError("El tiempo de consulta debe estar entre 1 y 600 segundos.")
+    return value
+
+
+def collect(db_path, start=None, end=None, query_timeout=15):
     first, stop, previous = period(start, end)
-    deadline = time.monotonic() + 2
+    deadline = time.monotonic() + query_budget(query_timeout)
     # mode=ro fails if the database is missing; never creates an empty database.
     db = sqlite3.connect(Path(db_path).resolve().as_uri() + "?mode=ro", uri=True, timeout=0.2)
     db.row_factory = sqlite3.Row
@@ -83,13 +95,14 @@ def collect(db_path, start=None, end=None):
         data["geo_internal"] = 0
         if geo_exists:
             # Reuse the stored cache only: no network calls and no writes during reporting.
-            geo_where = where.replace("datetime(timestamp)", "datetime(a.timestamp)")
             geo = list(db.execute(
+                "WITH origins AS (SELECT ip, COUNT(*) hits FROM attack_logs WHERE " + where +
+                " AND is_attack=1 GROUP BY ip) "
                 "SELECT CASE WHEN g.is_private=1 OR g.country='Red interna' THEN 'internal' "
                 "WHEN g.country IS NULL OR trim(g.country) IN ('','Desconocido','Unknown') THEN 'unknown' "
-                "ELSE 'known' END kind, trim(g.country) country, COUNT(*) total "
-                "FROM attack_logs a LEFT JOIN ip_geo_cache g ON g.ip=a.ip WHERE " + geo_where +
-                " AND a.is_attack=1 GROUP BY 1,2 ORDER BY total DESC, country", bounds))
+                "ELSE 'known' END kind, trim(g.country) country, SUM(a.hits) total "
+                "FROM origins a LEFT JOIN ip_geo_cache g ON g.ip=a.ip "
+                "GROUP BY 1,2 ORDER BY total DESC, country", bounds))
             data["countries"] = [(r["country"], r["total"]) for r in geo if r["kind"] == "known"][:10]
             data["geo_known"] = sum(r["total"] for r in geo if r["kind"] == "known")
             data["geo_internal"] = sum(r["total"] for r in geo if r["kind"] == "internal")
@@ -98,18 +111,30 @@ def collect(db_path, start=None, end=None):
         optional = ["method", "query_string", "body", "user_agent"]
         fields = ", ".join(f"substr({c},1,6000) AS {c}" if c in columns else f"NULL AS {c}" for c in optional)
         identity = "id" if "id" in columns else "rowid"
-        for attack_type, count in data["types"]:
-            selection = where + " AND is_attack=1 AND COALESCE(NULLIF(attack_type,''),'Desconocido')=?"
-            params = (*bounds, attack_type)
-            row = dict(db.execute(
-                f"SELECT {identity} event_id, timestamp, substr(ip,1,180) ip, substr(path,1,6000) path, {fields}, "
-                f"{source} source, {valid} confidence FROM attack_logs WHERE " + selection +
-                f" ORDER BY datetime(timestamp) DESC, {identity} DESC LIMIT 1", params).fetchone())
-            row.update(attack_type=attack_type, count=count)
-            row["scores"] = dict(db.execute(
-                f"SELECT COUNT({valid}) valid, AVG({valid}) average FROM attack_logs WHERE " + selection,
-                params).fetchone())
-            data["examples"].append(row)
+        if data["types"]:
+            # One pass for category statistics and most recent IDs, rather than
+            # two full-table scans per category. Fetch payload only for ten IDs.
+            category = "COALESCE(NULLIF(attack_type,''),'Desconocido')"
+            placeholders = ",".join("?" for _ in data["types"])
+            samples = db.execute(
+                f"WITH ranked AS (SELECT {identity} event_id, {category} category, "
+                f"COUNT({valid}) OVER (PARTITION BY {category}) valid_count, "
+                f"AVG({valid}) OVER (PARTITION BY {category}) average, "
+                f"ROW_NUMBER() OVER (PARTITION BY {category} ORDER BY datetime(timestamp) DESC, {identity} DESC) rn "
+                "FROM attack_logs WHERE " + where +
+                f" AND is_attack=1 AND {category} IN ({placeholders})) "
+                "SELECT event_id, category, valid_count, average FROM ranked WHERE rn=1",
+                (*bounds, *(label for label, _ in data["types"]))).fetchall()
+            by_category = {row["category"]: row for row in samples}
+            for attack_type, count in data["types"]:
+                sample = by_category[attack_type]
+                row = dict(db.execute(
+                    f"SELECT {identity} event_id, timestamp, substr(ip,1,180) ip, substr(path,1,6000) path, {fields}, "
+                    f"{source} source, {valid} confidence FROM attack_logs WHERE {identity}=?",
+                    (sample["event_id"],)).fetchone())
+                row.update(attack_type=attack_type, count=count,
+                           scores={"valid": sample["valid_count"], "average": sample["average"]})
+                data["examples"].append(row)
         data["daily"] = [tuple(row) for row in db.execute(
             "SELECT date(timestamp), COUNT(*), SUM(is_attack=1) FROM attack_logs WHERE " + where +
             " GROUP BY date(timestamp) ORDER BY date(timestamp)", bounds)]
@@ -403,17 +428,19 @@ def render_pdf(data):
 
 def register_report(app, auth_required, db_path):
     from flask import Response, jsonify, request
+    # Web requests remain bounded below the project's 60s Gunicorn timeout.
+    web_budget = min(query_budget(os.getenv("EXECUTIVE_REPORT_QUERY_TIMEOUT", "15")), 30)
     @app.get("/dashboard/api/executive-report.pdf")
     @auth_required
     def executive_report_pdf():
         try:
-            data=collect(db_path, request.args.get("start"), request.args.get("end"))
+            data=collect(db_path, request.args.get("start"), request.args.get("end"), query_timeout=web_budget)
             pdf=render_pdf(data)
         except ValueError as exc:
             return jsonify(ok=False, error=str(exc)),400
         except sqlite3.Error:
             app.logger.warning("Executive report database unavailable or query budget exceeded")
-            return jsonify(ok=False, error="Informe no disponible. Reintente con un período menor o fuera de hora punta."),503
+            return jsonify(ok=False, error="Informe no disponible: base ocupada o tiempo de consulta agotado. Genérelo por CLI sobre una copia consistente con --query-timeout 120."),503
         response=Response(pdf,mimetype="application/pdf")
         response.headers["Content-Disposition"]=f'attachment; filename="honeypot-{data["start"]}-{data["end"]}.pdf"'
         response.headers["Cache-Control"]="no-store"
@@ -426,5 +453,11 @@ if __name__ == "__main__":
     parser.add_argument("--start")
     parser.add_argument("--end")
     parser.add_argument("--output",required=True)
+    parser.add_argument("--query-timeout", type=query_budget, default=120,
+                        help="Presupuesto de consultas en segundos (1-600; CLI: 120). Use una copia consistente para consultas largas.")
     args=parser.parse_args()
-    Path(args.output).write_bytes(render_pdf(collect(args.db,args.start,args.end)))
+    try:
+        result = collect(args.db, args.start, args.end, query_timeout=args.query_timeout)
+        Path(args.output).write_bytes(render_pdf(result))
+    except (sqlite3.Error, ValueError) as exc:
+        parser.exit(1, f"No se pudo generar el informe: {exc}. Si se agotó el tiempo, use una copia consistente y aumente --query-timeout (máximo 600).\n")
